@@ -1,0 +1,217 @@
+﻿# ============================================================
+#  吃白饭的肥鱼 · QQ 机器人配置
+#  复制为 config.yaml 后修改；所有项均可用环境变量覆盖（见 README）
+# ============================================================
+
+# ---------- 模型服务（OpenAI 兼容接口） ----------
+llm:
+  base_url: http://127.0.0.1:8792/v1
+  api_key: sk-your-key-here    # 本地代理的 key，也可用 FISHBOT_LLM_API_KEY 覆盖
+  model: deepseek-v4.1-flash-free   # 你要的 4.1 flash free；它偶尔把话全塞进思考里，代码会捞回来
+  fallback_models: [deepseek-v4.1-flash-1017]  # 同族兜底，只在主模型真吐不出正文时才用
+  temperature: 0.9
+  top_p: 0.95
+  max_tokens: 400
+  timeout: 60
+  stream: true                 # 流式：边生成边把说完的句子发出去
+  retries: 2
+  allow_reasoning_fallback: true  # 正文为空时，从思考里把「她本来要说的那句」捞回来
+  extra_body:                  # 透传给 /chat/completions：让它少想一点、多吐正文
+    reasoning_effort: low
+    chat_template_kwargs:
+      thinking: false
+# ---------- 人设 ----------
+persona:
+  name: 吃白饭的肥鱼
+  aliases: [肥鱼, 大肥鱼, 吃白饭的肥鱼, 鱼鱼, 小鱼, 肥鱼鱼]
+  prompt_file: personas/feiyu.md   # 人设正文，改这个文件就能改性格
+  max_chars: 90                    # 单次回复期望长度（软约束）
+  hard_max_chars: 400              # 超过则截断
+  allow_emoji: true
+
+# ---------- QQ 连接（OneBot v11 / NapCat / Lagrange） ----------
+onebot:
+  mode: forward                # forward=机器人连 NapCat；reverse=NapCat 连机器人
+  ws_url: ws://127.0.0.1:3001  # forward 模式的地址
+  access_token: ""             # 与 NapCat 里配置的 token 一致，空则不校验
+  listen_host: 0.0.0.0         # reverse 模式监听地址
+  listen_port: 8080
+  listen_path: /onebot/v11/ws  # reverse 模式路径，留空表示不校验
+  reconnect_max_seconds: 30
+
+# ---------- 行为 ----------
+behavior:
+  private_enabled: true        # 私聊是否回复
+  private_allow: []            # 白名单 QQ，空=全部
+  private_deny: []             # 黑名单 QQ
+  group_enabled: true
+  group_allow: []              # 白名单群号，空=全部
+  group_deny: []
+  group_require_at: false      # 群里不用 @ 也能接话（@ 她或叫她名字必回）
+  group_reply_probability: 0.35  # 别人聊天（不像冲她说的）时插话的概率
+  group_min_chars: 4           # 插话所需的最小消息长度
+  group_directed_probability: 0.85  # 话像是冲她说的（问句、带你/她名字）时接话的概率
+  group_ignore_at_others: true      # 消息里 @ 的是别人（没 @ 她）就不接
+  group_ambient_lines: 12      # 带进上下文的"群里最近消息"条数，0=关闭
+  ignore_bots: true
+  reply_to_self: false
+  per_session_cooldown: 1.5    # 同一会话两条回复最小间隔（秒）
+  global_concurrency: 4        # 同时进行的模型请求上限
+  rate_limit_per_minute: 20    # 单会话每分钟最多回复条数
+  quote_reply: false           # 群聊用"引用回复"代替 @
+  reply_prefix_at: false       # 群聊回复时是否 @ 对方
+
+  typing_delay:
+    enabled: true
+    per_char_ms: 45            # 每字延迟，模拟打字
+    min_ms: 500
+    max_ms: 3000
+
+  split_reply: true            # 长回复拆成多条短消息
+  split_max_chars: 120         # 单条消息最大长度
+
+# ---------- 记忆 ----------
+memory:
+  db_path: data/fishbot.db
+  max_messages: 16             # 会话上下文保留的消息条数
+  max_context_chars: 6000
+  ttl_hours: 168               # 超过该时长的上下文视为过期（只做裁剪参考）
+
+# ---------- 自主活动：让她自己玩 QQ ----------
+autonomy:
+  enabled: false               # 总开关；打开后她会自己改签名、写心情、主动找人聊天
+  interval_minutes: 45         # 两次活动之间的基础间隔（分钟）
+  jitter: 0.4                  # 间隔抖动比例，免得像定时任务
+  max_actions_per_hour: 3      # 每小时最多折腾几次，0=不限制
+  quiet_hours: "00:00-08:00"   # 这段时间安分睡觉，留空=不限制
+  actions: [signature, diary, chat]   # 候选动作，说明见下
+  proactive_private_allow: []  # 允许主动私聊的 QQ，空=绝不主动找人（建议只填自己）
+  proactive_group_allow: []    # 允许主动冒泡的群，空=绝不主动冒泡
+  allow_profile_edit: true     # 允许改个性签名
+  allow_nickname_change: false # 允许改昵称（比较显眼，默认关）
+  min_idle_minutes: 20         # 最近这么久内有人跟她说话，就先安分
+  follow_up_after_hours: 3     # 自己上句没人接，隔这么久才允许回访
+  max_tokens: 200              # 自主活动内部生成的上限
+
+# 动作说明：
+#   signature —— 改 QQ 个性签名（不会动昵称）
+#   nickname  —— 改昵称，需要同时开 allow_nickname_change
+#   diary     —— 写一句心情记录，之后聊天时她会自己想起来
+#   chat      —— 主动私聊 proactive_private_allow 里的人
+#   group     —— 在 proactive_group_allow 的群里冒泡
+
+# ---------- 语音 ----------
+# 音色踩过的三个坑，都写在这儿，别再犯：
+#   1) zh-CN-XiaobeiNeural 这个名字根本不存在，服务端把它模糊匹配成
+#      zh-CN-liaoning-XiaobeiNeural —— 辽宁方言音色（标签 Dialect），所以一股东北味儿；
+#   2) zh-CN-XiaoniNeural 同理，会变成陕西话；
+#   3) 真正的可选项只有 XiaoxiaoNeural（温柔，偏播报）与 XiaoyiNeural（活泼、年轻、偏高）。
+# 现在用 XiaoyiNeural 压音高：够甜，又不至于像播音员。
+tts:
+  enabled: true
+  engine: edge                 # edge=联网神经网络音色 | sapi=系统离线语音 | auto=先 edge 后 sapi
+  voice: zh-CN-XiaoyiNeural    # 甜、年轻；方言名会被代码里的守卫换掉
+  sapi_voice: Microsoft Huihui Desktop
+  rate: "-14%"                 # 慢一点才连得起来（原来 +6%/+12% 听着像在赶稿）
+  volume: "+0%"
+  pitch: "-16Hz"               # Xiaoyi 原生约 296Hz，压到 280Hz 左右：甜但不尖
+  lively: true                 # 每条回复之间微调一下语速，别每次都一模一样
+  rate_jitter: 2               # 语速随机浮动 ±2%
+  pitch_jitter: 0              # 音高不要抖：一抖就像好几个人在接话（人机感主因）
+  mode: auto                   # off=永不 | command=只有 /语音 开过才发 | auto=按概率自动发
+  probability: 0.35            # auto 模式下每条回复转语音的概率
+  max_chars: 220               # 超过这个长度才分段；分段后会用 ffmpeg 拼成一条，别让它变成几条语音
+  send_text_along: false       # 发语音时是否再补一份文字（默认不补，只发语音）
+  dir: data/voice              # 音频临时目录
+  keep_files: 60               # 只保留最近这么多条音频
+  timeout: 30                  # 单次合成超时（秒）
+  ffmpeg: ""                   # 长句拼接用；留空则自动找（装了 imageio-ffmpeg 也能自愈）
+# ---------- 微信（走 wechatauto 桥接进程） ----------
+# 需要另一个 Python 3.12 环境装 wechatauto，见 README「接入微信」。
+wechat:
+  enabled: false               # 要用微信就改成 true
+  python: D:\path\to\wechatauto\.venv312\Scripts\python.exe
+  script: D:\path\to\wx_bridge.py
+  interval: 1                  # 轮询微信数据库的间隔（秒）
+  verify: false                # 发送后回读数据库确认（慢 8 秒，一般不必要）
+  echo_self: false             # 把自己发的消息也回传（调试用）
+  private_enabled: true
+  group_enabled: true
+  allow_chats: []              # 只理这些会话（昵称 / wxid / 群名），空 = 全部
+  deny_chats: []               # 这些会话一律不理
+  ignore_before: 0             # 忽略早于该 unix 秒的消息
+  log_file: data/wx_bridge.log
+  start_timeout: 150
+
+# ---------- 联网 ----------
+net:
+  enabled: true                # 关掉 = 拔网线，她只能靠脑子里的旧知识
+  max_results: 5               # 一次搜索取几条结果
+  timeout: 20
+  max_page_chars: 3000         # 单个网页最多塞给模型多少字
+  cache_seconds: 600           # 同一个词多久内不重复搜（省流量也省时间）
+  auto: true                   # 她觉得自己需要查的时候可以自己查（关键词粗判）
+  auto_max_per_turn: 1         # 一轮对话最多自动查几次
+  show_sources: true           # 需要时把来源附在回复末尾
+
+# ---------- 表情包 ----------
+stickers:
+  enabled: true
+  dir: assets/stickers          # 素材目录（图 + manifest.json）
+  manifest: manifest.json
+  probability: 0.25             # 她没主动提时，自己贴一张的概率
+  cooldown_seconds: 60          # 两张之间至少隔这么久
+  max_per_hour: 20              # 每小时最多贴几张
+
+# ---------- 干活（她自己的手脚） ----------
+tools:
+  enabled: true
+  screenshot: true              # 允许截图（截的是这台机器的屏幕）
+  sysinfo: true                 # 允许看机器状况（开机多久、内存、磁盘）
+  compact: true                 # 允许压缩自己的上下文
+  file_read: false              # 允许读本机文件——默认关：她可能把内容念到群里
+  auto: true                    # 允许她自己决定动手（[[工具:截图]]）
+  auto_max_per_turn: 1
+  max_shot_edge: 1280           # 截图最长边，太大发不出去
+  shot_dir: data/shots
+  keep_shots: 30                # 只留最近这么多张截图
+  shot_cooldown_seconds: 30     # 两次截图至少隔这么久
+  shot_max_per_hour: 6
+  keep_recent: 6                # 压缩上下文时保留最近几条原话
+  auto_compact_rows: 60         # 攒到这么多条就自己压一次（0 = 关掉自动压缩）
+# ---------- 借来的本事（.dsh/skills） ----------
+skills:
+  enabled: true
+  dir: 'C:\Users\YourName\.dsh\skills'   # skill 根目录
+  allow:                     # 只认这几套，别的 skill 不进她脑子
+    - goutoujunshi
+    - nuwa-skill
+  auto: true                 # 聊天内容命中领域就自动把正文递给她
+  max_chars: 4000            # 一套本事最多塞多少字
+  per_skill:                 # 单套放宽/收紧
+    goutoujunshi: 3000
+    nuwa-skill: 7000
+  index_preview: 60          # 索引里每套显示多少字说明
+
+# ---------- 识图（她自己的眼睛） ----------
+vision:
+  enabled: true
+  model: deepseek-v4.1-flash-free   # 跟聊天同一个模型：实测它看得见图，偶尔只给思考，正文由回收层捞
+  fallback_models: ["qwen3.8-flash-low", "deepseek-v4.1-flash-1017"]   # 这张图连思考里都没料时才轮到它们
+  auto: true                    # 收到图就自动看一眼（关掉就只能 /看图）
+  max_images: 3                 # 一条消息最多看几张
+  max_bytes: 6000000            # 单张图最大字节数
+  timeout: 60.0
+  max_tokens: 300               # 描述最多多少字
+  cache_seconds: 3600           # 同一张图（按内容哈希）多久内不重复看
+  keep_files: true              # 把图存到 data/vision 便于回看
+  dir: data/vision
+  keep_recent: 50               # 只留最近这么多张
+  prompt: ''                    # 留空用内置提示词
+
+# ---------- 管理 ----------
+admin:
+  users: []                    # 管理员 QQ 号，可执行 /闭嘴 /重载 /状态
+  command_prefix: "/"
+
+log_level: INFO

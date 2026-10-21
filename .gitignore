@@ -1,0 +1,28 @@
+# 密钥与个人配置
+config.yaml
+
+# 运行期数据：记忆库、日志、心跳、截图、语音、看过的图
+data/
+*.log
+fishbot.log
+
+# 虚拟环境与缓存
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# 我自己留下的备份
+*.bak
+*.bak-*
+
+# 表情包图片（体积大且有版权，按 README 自己放）
+assets/stickers/*.png
+assets/stickers/*.jpg
+assets/stickers/*.jpeg
+assets/stickers/*.gif
+assets/stickers/*.webp
+
+# 编辑器
+.vscode/
+.idea/
