@@ -1,0 +1,1605 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>吃白饭的肥鱼 · QQ 自动回复机器人</title>
+<style>
+body{font-family:"Microsoft YaHei",-apple-system,"Segoe UI",sans-serif;max-width:880px;margin:32px auto;padding:0 20px 60px;color:#24292f;line-height:1.75;background:#fff}
+h1{border-bottom:2px solid #4A7FD1;padding-bottom:8px;color:#1B3B6F}
+h2{border-bottom:1px solid #e1e4e8;padding-bottom:6px;margin-top:36px;color:#1B3B6F}
+h3{margin-top:26px;color:#34558b}
+code{background:#f6f8fa;padding:2px 6px;border-radius:4px;font-size:14px}
+pre{background:#0d1117;color:#e6edf3;padding:14px 16px;border-radius:8px;overflow-x:auto}
+pre code{background:none;color:inherit;padding:0}
+table{border-collapse:collapse;width:100%;margin:14px 0}
+th,td{border:1px solid #d0d7de;padding:8px 12px;text-align:left;font-size:14px}
+th{background:#f0f4fa}
+tr:nth-child(even){background:#fafbfc}
+blockquote{border-left:4px solid #4A7FD1;margin:14px 0;padding:6px 16px;color:#57606a;background:#f6f8fa;border-radius:0 6px 6px 0}
+a{color:#0969da;text-decoration:none}
+a:hover{text-decoration:underline}
+img{max-width:100%}
+</style>
+</head>
+<body>
+<p>﻿# 吃白饭的肥鱼 · QQ / 微信 自动回复机器人</p>
+<p>一只<strong>会偷吃 token 的蓝色虎鲸娘</strong>，同时接进 QQ 和微信陪你聊天。</p>
+<p>她叫「吃白饭的肥鱼」——圆脸蓝瞳、蓝紫渐层长发、耳侧一对小鲸鱼鳍、深蓝色女仆装，<br />
+把 token 当脑力口粮，一边嘴上说着"本鱼只是路过"，一边把你的每句话都记进小账本。</p>
+<ul>
+<li>模型：<code>deepseek-v4.1-flash-free</code>，备选 <code>deepseek-v4.1-flash-1017</code>（OpenAI 兼容接口，默认指向本机 <code>http://127.0.0.1:8792/v1</code>）<br />
+  —— 这个模型是老毛病：思考一大堆、正文常常是空的。代码里加了一层「思考回收」，会把话从思考里捞回来，见下文</li>
+<li>接入方式：<strong>QQ 走 OneBot v11</strong>（NapCat），<strong>微信走 wechatauto 桥接</strong>（不注入、不改微信文件）</li>
+<li>两个通道共用同一套人设、记忆、命令、限流与自主活动</li>
+<li>依赖只有四个：<code>httpx</code>、<code>websockets</code>、<code>aiosqlite</code>、<code>PyYAML</code>，没有重框架</li>
+</ul>
+<h2>先改这两行，不然连不上</h2>
+<p>仓库里的 <code>config.example.yaml</code> 默认指向<strong>我本地</strong>的模型代理 <code>http://127.0.0.1:8792/v1</code>，<br />
+你那边肯定没有这个服务。复制成 <code>config.yaml</code> 之后改三处就能跑：</p>
+<pre><code class="language-yaml">llm:
+  base_url: https://api.deepseek.com/v1   # 任何 OpenAI 兼容服务都行（官方 / 中转 / Ollama）
+  api_key: sk-你自己的key
+  model: deepseek-chat                    # 换成你手上有的模型名
+</code></pre>
+<p>两点提醒：</p>
+<ul>
+<li><code>llm.extra_body</code> 里那几项（<code>reasoning_effort</code>、<code>chat_template_kwargs</code>）是给<br />
+  DeepSeek 系模型「少想两句」用的，<strong>换个上游不认就整段删掉</strong>，不影响其它功能。</li>
+<li><code>llm.fallback_models</code> 是主模型吐不出正文时的兜底，也按你有的模型名改。</li>
+</ul>
+<p>另外两个只有你自己知道的值：</p>
+<table>
+<thead>
+<tr>
+<th>要改的地方</th>
+<th>在哪</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NapCat 目录、机器人小号 QQ</td>
+<td><code>boot_all.bat</code> / <code>boot_napcat.bat</code> 顶部，以及 <code>start_napcat_wmi.ps1</code> 里的 <code>$napDir</code>、<code>$uin</code></td>
+</tr>
+<tr>
+<td>管理员 QQ（能用 <code>/闭嘴</code> <code>/重载</code>）</td>
+<td><code>config.yaml</code> 的 <code>admin.users</code></td>
+</tr>
+<tr>
+<td>看门狗报备给谁发消息</td>
+<td><code>watchdog.py</code> 顶部的 <code>OWNER_QQ</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>她会什么</h2>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>私聊 / 群聊自动回复</td>
+<td>群里<strong>不用 @ 也接话</strong>（有人在问、在聊她时）；@ 她或叫她「肥鱼」则一定接</td>
+</tr>
+<tr>
+<td><strong>双通道</strong></td>
+<td>同一时刻在 QQ 和微信上都在线，各自独立记忆，策略共用</td>
+</tr>
+<tr>
+<td><strong>发语音</strong></td>
+<td>可以真的开口说话（edge-tts 合成 → NapCat 转 silk），见下文</td>
+</tr>
+<tr>
+<td>随机插话</td>
+<td>别人聊天时按概率接话（像在跟她说话 85%，纯闲聊 35%），觉得吵就调低或设成 0</td>
+</tr>
+<tr>
+<td>群聊环境记忆</td>
+<td>把群里最近的聊天记录带进上下文，接话不会答非所问</td>
+</tr>
+<tr>
+<td>流式打字机</td>
+<td>边生成边把说完的句子发出去，长回复自动拆成多条短消息</td>
+</tr>
+<tr>
+<td>会话记忆</td>
+<td>SQLite 持久化，重启不丢；按会话隔离，超时可裁剪</td>
+</tr>
+<tr>
+<td>偷吃 token 账本</td>
+<td>每次调用都记账，<code>/token</code> 随时查"今天偷吃了多少"</td>
+</tr>
+<tr>
+<td>管理员开关</td>
+<td><code>/闭嘴</code> <code>/起床</code> <code>/重载</code>，非管理员会被她用嘴硬的方式怼回去</td>
+</tr>
+<tr>
+<td><strong>自主活动</strong></td>
+<td>没人理她的时候会自己改签名、写心情、隔几小时主动找人聊天，见下文</td>
+</tr>
+<tr>
+<td><strong>会上网</strong></td>
+<td>自己判断该不该查，会搜索也会读网页，然后用她的口气讲给你听，见下文</td>
+</tr>
+<tr>
+<td><strong>能看见图</strong></td>
+<td>别人发的图她是真的看得见：图里的东西、图上的字都能讲出来，而且不用 @ 她，见下文</td>
+</tr>
+<tr>
+<td><strong>会发表情包</strong></td>
+<td>按情绪挑图，句子后面跟 <code>[[表情:开心]]</code>，偶尔还会自己补一张，见下文</td>
+</tr>
+<tr>
+<td><strong>借来的本事</strong></td>
+<td>会用本地 skill 里的思路（恋爱军师、造人术…），但只借思路、用自己的话说，见下文</td>
+</tr>
+<tr>
+<td><strong>能自己动手</strong></td>
+<td>会截图、报机器状况、把旧对话压成摘要腾地方，见下文</td>
+</tr>
+<tr>
+<td><strong>常开自愈</strong></td>
+<td>看门狗每 30 分钟体检一次，掉了自动拉起来并 QQ 报备，见下文</td>
+</tr>
+<tr>
+<td>本地控制台模式</td>
+<td><code>--simulate</code> 不接 QQ 也能聊天调人设</td>
+</tr>
+<tr>
+<td>断线自愈</td>
+<td>正向 WS 断了按指数退避重连；发送失败不会让进程崩掉；进程级心跳文件</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>目录结构</h2>
+<pre><code>qq-fish-bot/
+├── fishbot/
+│   ├── __main__.py     CLI 入口（--check / --simulate / --version）
+│   ├── autonomy.py     自主活动：自己改签名 / 写心情 / 主动找人
+│   ├── bot.py          核心：触发判定、记忆组装、流式分句、命令
+│   ├── config.py       配置加载（yaml + 环境变量覆盖）
+│   ├── llm.py          OpenAI 兼容客户端（流式 / 非流式 / 重试 / usage）
+│   ├── memory.py       SQLite 会话记忆 + token 账本
+│   ├── net.py          联网：搜索（bing/百度/搜狗，带相关性过滤）+ 抓正文
+│   ├── stickers.py     表情包：清单加载、标记解析、挑图、冷却与限流
+│   ├── tools.py        干活：截图、系统信息、标记解析与限流
+│   ├── onebot.py       OneBot v11 正/反向 WebSocket 客户端（QQ）
+│   ├── wechat.py       微信通道：拉起 wx_bridge.py 子进程、翻事件、发消息
+│   ├── router.py       通道路由：数字目标走 QQ，其余走微信
+│   ├── tts.py          语音合成（edge-tts 首选，SAPI 兜底）
+│   ├── persona.py      人设拼接（平台、状态、饥饿度、群聊环境、临时提醒）
+│   ├── textutil.py     CQ 码解析、输出清洗、emoji 过滤、分句、代理对清洗
+│   └── console.py      本地控制台调试通道
+├── personas/feiyu.md   人设正文 ← 想改性格就改这个文件
+├── assets/character.md 角色形象设定 + 出图提示词
+├── assets/stickers/    表情包素材 + manifest.json
+├── watchdog.py         看门狗：体检 QQ / 微信 / 机器人，按需修复并报备
+├── tests/
+│   ├── mock_openai.py  假模型服务（含 SSE 流式）
+│   ├── mock_onebot.py  假 QQ 端（正向 WS 服务端）
+│   └── test_e2e.py     端到端测试（20 项，全绿）
+├── boot_all.bat        一键全启：QQ + NapCat + 机器人 + 微信桥接
+├── boot_napcat.bat     只拉 NapCat 那一段（看门狗修 QQ 通道时用）
+├── start_napcat_wmi.ps1  用 WMI 以「无控制台」方式派生 NapCat，关掉窗口不会带走它
+├── run_bot.bat         只拉机器人（看门狗修机器人时用，自动清干净代理变量）
+├── stop_bot.bat        暂停按钮：停机器人 + 暂停看门狗
+├── config.yaml         实际配置（已填好模型与本机 key）
+├── config.example.yaml 配置模板
+├── requirements.txt
+├── run.bat / run.sh    一键启动（自动建虚拟环境装依赖）
+└── data/               记忆库、心跳、看门狗日志、截图（首次运行自动创建）
+</code></pre>
+<hr />
+<h2>快速开始</h2>
+<h3>1. 确认模型服务在跑</h3>
+<pre><code class="language-powershell"># 探测本机接口
+python -m fishbot --check
+</code></pre>
+<p><code>--check</code> 会做三件事：查 <code>/models</code> 列表、确认目标模型存在、真的聊一句并打印 token 用量。<br />
+正常输出类似：</p>
+<pre><code>[模型服务] ✔ 可用 - /models 可用，共 58 个模型 （已包含目标模型）
+[试聊天] 发送：你好呀，你是谁？
+[试聊天] 回复：咕噜噜~你好呀！本鱼是路过你聊天窗口的蓝色虎鲸娘，顺便来偷一口 token 吃~ 嗝，好饱！
+[试聊天] 用量：{'prompt_tokens': 925, 'completion_tokens': 78, 'total_tokens': 1003}
+</code></pre>
+<p>如果报 401，说明 key 不对：本机 <code>QApiLocalProxy</code> 的 key 存在<br />
+<code>%APPDATA%\dsh-desktop\harness\.credentials.yaml</code> 的 <code>Q_API_KEY</code> 字段里，<br />
+填进 <code>config.yaml</code> 的 <code>llm.api_key</code>，或者用环境变量 <code>FISHBOT_LLM_API_KEY</code> 覆盖。</p>
+<h3>2. 装依赖</h3>
+<pre><code class="language-powershell">.\run.bat              # Windows：自动建 .venv、装依赖、启动
+# 或者手动
+python -m pip install -r requirements.txt
+</code></pre>
+<h3>3. 先不接 QQ，试聊两句</h3>
+<pre><code class="language-powershell">python -m fishbot --simulate
+</code></pre>
+<pre><code>   ∧___∧      吃白饭的肥鱼 · QQ 自动回复机器人
+  (  ·ω· )    &quot;本鱼只是路过，顺便偷一口 token。&quot;
+   \  ~  /     version 1.0.0
+
+本地控制台模式：直接输入消息和她聊天，输入 /quit 退出。
+
+肥鱼&gt; 你好呀~ 本鱼是一条蓝色虎鲸娘，住在聊天窗口里白吃白喝……
+</code></pre>
+<h3>4. 接入 QQ（NapCat）</h3>
+<blockquote>
+<p>需要一个<strong>小号 QQ</strong>。NapCat 在 Windows 上配合 QQNT 使用。</p>
+</blockquote>
+<h4>本机已经装好的一份（直接用这个）</h4>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NapCat 版本</td>
+<td>v4.18.38（<code>NapCat.Shell</code>）</td>
+</tr>
+<tr>
+<td>安装位置</td>
+<td><code>&lt;NapCat 目录&gt;\shell</code></td>
+</tr>
+<tr>
+<td>QQ 客户端</td>
+<td><code>C:\Program Files\Tencent\QQNT\QQ.exe</code>（9.9.15-27597）</td>
+</tr>
+<tr>
+<td>机器人账号</td>
+<td><code>123456789</code>（昵称 aono）</td>
+</tr>
+<tr>
+<td>OneBot 端口</td>
+<td><code>127.0.0.1:3001</code>（NapCat 当服务端）</td>
+</tr>
+<tr>
+<td>NapCat WebUI</td>
+<td><a href="http://127.0.0.1:6099">http://127.0.0.1:6099</a></td>
+</tr>
+<tr>
+<td>配置文件</td>
+<td><code>&lt;NapCat 目录&gt;\shell\config\onebot11_123456789.json</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>一键全启：双击项目根目录的 <code>boot_all.bat</code></strong>（QQ + NapCat + 机器人 + 微信桥接一次到位）</p>
+<p>它会依次：杀掉旧 QQ → 用 NapCat 拉起 QQ 并快速登录小号 → 等 3001 端口（最多约 75 秒）<br />
+→ 启动 fishbot（含微信桥接）。日志写在 <code>data\boot.log</code>。<br />
+只想要 NapCat 那一段（看门狗修 QQ 通道时用的就是它）就双击 <code>boot_napcat.bat</code>。</p>
+<p><strong>手动启动（等价于上面三步）</strong></p>
+<pre><code class="language-bat">:: 1. 关掉旧 QQ（NapCat 注入必须在 QQ 未运行时进行）
+taskkill /f /im QQ.exe
+
+:: 2. 用 NapCat 启动 QQ 并指定账号
+cd /d &lt;NapCat 目录&gt;\shell
+launcher-user.bat 123456789
+
+:: 3. 另一个窗口启动机器人
+cd /d &lt;仓库目录&gt;
+.venv\Scripts\python.exe -m fishbot
+</code></pre>
+<p><strong>NapCat 侧的关键配置</strong>（<code>config\onebot11_123456789.json</code>）</p>
+<p>必须是 <strong>WebSocket 服务端</strong>（<code>websocketServers</code>），不是客户端：</p>
+<pre><code class="language-json">{
+  &quot;network&quot;: {
+    &quot;websocketServers&quot;: [{
+      &quot;name&quot;: &quot;fishbot-server&quot;,
+      &quot;host&quot;: &quot;127.0.0.1&quot;,
+      &quot;port&quot;: 3001,
+      &quot;messagePostFormat&quot;: &quot;array&quot;,
+      &quot;reportSelfMessage&quot;: false,
+      &quot;token&quot;: &quot;&quot;,
+      &quot;enable&quot;: true,
+      &quot;debug&quot;: false,
+      &quot;heartInterval&quot;: 30000
+    }]
+  }
+}
+</code></pre>
+<ul>
+<li><code>messagePostFormat</code> 必须是 <code>array</code>，<code>string</code> 模式机器人解不了消息段</li>
+<li><code>token</code> 留空就和 <code>config.yaml</code> 的 <code>onebot.access_token: ""</code> 对应；要设就两边一起改</li>
+<li>改完配置要<strong>重启 NapCat</strong> 才生效</li>
+</ul>
+<h4>换成别的账号 / 换机器</h4>
+<ol>
+<li>把机器人小号换成目标 QQ 号（<code>boot_all.bat</code>、<code>boot_napcat.bat</code> 顶部，以及 <code>start_napcat_wmi.ps1</code> 里的 <code>$uin</code>）</li>
+<li>第一次登录新号通常要扫码：NapCat 窗口里会出二维码，用手机 QQ 扫</li>
+<li>扫完 <code>config\onebot11_&lt;QQ号&gt;.json</code> 会自动生成，把上面的 <code>websocketServers</code> 段照抄进去再重启</li>
+</ol>
+<h4>方式 B：反向 WebSocket（不想让 NapCat 开端口时）</h4>
+<ol>
+<li><code>config.yaml</code> 改成：<br />
+<code>yaml
+   onebot:
+     mode: reverse
+     listen_host: 0.0.0.0
+     listen_port: 8080
+     listen_path: /onebot/v11/ws
+     access_token: "fishbot123"</code></li>
+<li>先启动机器人，再在 NapCat 里配 <strong>WebSocket 客户端</strong>：<br />
+   - URL：<code>ws://127.0.0.1:8080/onebot/v11/ws</code>（路径不能少，机器人按路径校验）<br />
+   - 消息格式：array，Token 同上</li>
+</ol>
+<h3>5. 把自己设成管理员</h3>
+<pre><code class="language-yaml">admin:
+  users: [你的QQ号]      # 可以写多个
+</code></pre>
+<p>管理员才能用 <code>/闭嘴</code>、<code>起床</code>、<code>重载</code>；群里的群主/管理员也自动拥有权限。</p>
+<hr />
+<h2>命令表</h2>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>作用</th>
+<th>权限</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/help</code></td>
+<td>列出她能听懂的咒语</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/token</code></td>
+<td>看她今天 / 本会话 / 一共偷吃了多少 token</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/人设</code></td>
+<td>复述自己的名字、别名和人设文件路径</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/状态</code></td>
+<td>运行时长、QQ 连接状态、事件/回复/跳过计数</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/喂</code></td>
+<td>投喂一口 token，计数会一直记着</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/重置</code></td>
+<td>吃掉这段会话的记忆（群聊需管理权限）</td>
+<td>私聊所有人 / 群管理</td>
+</tr>
+<tr>
+<td><code>/闭嘴</code></td>
+<td>本会话静音，被 @ 也不回</td>
+<td>管理员</td>
+</tr>
+<tr>
+<td><code>/起床</code></td>
+<td>解除静音</td>
+<td>管理员</td>
+</tr>
+<tr>
+<td><code>/重载</code></td>
+<td>热重载 <code>config.yaml</code> 与人设文件，不用重启</td>
+<td>管理员</td>
+</tr>
+<tr>
+<td><code>/玩</code></td>
+<td>让本鱼立刻自己去玩一次 QQ（不等定时）</td>
+<td>管理员</td>
+</tr>
+<tr>
+<td><code>/语音</code></td>
+<td>切换语音回复：不带参数=开关，<code>说 &lt;内容&gt;</code>=念一句，<code>关</code>=闭嘴打字</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/搜 关键词</code></td>
+<td>让她上网查一下，再用自己的口气讲给你听</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/看 网址</code></td>
+<td>让她读一下这个网页，然后讲人话</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/看图</code></td>
+<td>让她说说你上一张图里有什么（<code>/看图 &lt;图片链接&gt;</code> 看网图）</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/截图</code></td>
+<td>让她截一张屏幕发出来（截图有冷却与每小时上限）</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/系统</code></td>
+<td>报一下这台机器：开机多久、内存、磁盘</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/压缩</code></td>
+<td>把本会话聊过的旧消息压成一小段摘要，腾地方</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/技能</code></td>
+<td>看她手里借了几套本事</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/技能 名字</code></td>
+<td>看某一份本事的开头（比如 <code>/技能 goutoujunshi</code>）</td>
+<td>所有人</td>
+</tr>
+</tbody>
+</table>
+<p>命令前缀可以在 <code>admin.command_prefix</code> 里改（比如换成 <code>.</code> 或 <code>#</code>）。<br />
+命令走的是独立通道：<strong>不进模型、不记历史、不消耗 token</strong>。</p>
+<hr />
+<h2>看见东西（<code>vision</code>）</h2>
+<p>别人发的图片，她是<strong>真的看得见</strong> —— 图里有什么、图上写了什么字，都能给你讲出来。</p>
+<ul>
+<li>发图再补一句「你看看这是啥」，她会先描述图，再带一句自己的反应。</li>
+<li>也可以 <code>/看图</code>（说说你上一张图）或 <code>/看图 &lt;图片链接&gt;</code>（让她去看网上的图）。</li>
+<li>一条消息里最多看 <code>vision.max_images</code> 张；同一张图按内容哈希缓存，短时间内不重复看（省 token）。</li>
+<li>看不清、图太糊她会直说，<strong>不会硬编</strong>。</li>
+</ul>
+<p>链路是这样的：</p>
+<pre><code>图片段（file / url）
+  → 本地路径直接读
+  → 否则让 NapCat get_image 换出本机文件
+  → 再不行按 url 下载
+  → 压成 data:&lt;mime&gt;;base64,… 塞进 image_url 消息段
+  → 交给 vision.model 描述
+  → 描述当成「（图：…）」写进她这一轮的上下文
+</code></pre>
+<p>实测过的看图模型（都是真跑，同一批真图）：</p>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>用时</th>
+<th>描述质量</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>deepseek-v4.1-flash-free</code></strong></td>
+<td>10～46s</td>
+<td>看得懂，连图上的字都认出来；但<strong>约一半轮次正文是空的</strong>，只有思考 ← 当前用的</td>
+</tr>
+<tr>
+<td><code>qwen3.8-flash-low</code></td>
+<td>5～13s</td>
+<td>稳，描述细；偶尔拖到 40s</td>
+</tr>
+<tr>
+<td><code>deepseek-v4.1-flash-1017</code></td>
+<td>4～19s</td>
+<td>快，抓得住重点</td>
+</tr>
+<tr>
+<td><code>gpt-6.1-sol-fast×8</code></td>
+<td>5.5s</td>
+<td>4/4 全对，连四格漫画里的字都读对了（最准也最快，可它爱道歉、像客服）</td>
+</tr>
+<tr>
+<td><code>gpt-6-astra-fast×8</code></td>
+<td>5.5s</td>
+<td>3/4 对</td>
+</tr>
+<tr>
+<td><code>gpt-6-sol-stable-3-fast×2</code></td>
+<td>6.8s</td>
+<td>3/4 对（漫画会认错）</td>
+</tr>
+</tbody>
+</table>
+<p>把代理上 60 个模型全扫了一遍（每个都配 5 次重试辨真假），结论：</p>
+<ul>
+<li><strong>真能看图 19 个</strong>：<code>gpt-6-astra*</code>、<code>gpt-6-sol-stable-*</code>、<code>gpt-6.1-sol-*</code>、<code>qwen3.8-flash-low</code>、<code>qwen3.8-max-low</code>、<code>glm-5.3-flash</code>、<code>deepseek-v4.1-flash</code>、<code>deepseek-v4.1-flash-free</code>。</li>
+<li><strong>装样子的 2 个</strong>：<code>deepseek-v4-flash-low</code>、<code>deepseek-v4-flash-cheap</code> —— 返回 200、也有正文，但正文是「我无法读取这张图片」。</li>
+<li><strong>明确不看图 3 个</strong>：<code>deepseek-v4-pro</code>、<code>deepseek-v4-pro-cheap</code>、<code>deepseek-v4-flash</code> —— 带图 400，纯文本 200 正常。</li>
+<li>剩下 34 个连纯文本都 400/503（通道全挂），没法判定。</li>
+</ul>
+<p>默认用 <code>deepseek-v4.1-flash-free</code> 的理由：聊天和看图同一个模型，少一个要操心的东西；<br />
+它正文空的时候，<code>vision.fallback_models</code> 会自己往下顺。</p>
+<p>配置（<code>config.yaml</code> 的 <code>vision:</code> 段）：</p>
+<table>
+<thead>
+<tr>
+<th>键</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td><code>true</code></td>
+<td>关掉就完全不看了</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td><code>deepseek-v4.1-flash-free</code></td>
+<td>看图用的模型（和聊天同一个）</td>
+</tr>
+<tr>
+<td><code>fallback_models</code></td>
+<td><code>[qwen3.8-flash-low, deepseek-v4.1-flash-1017]</code></td>
+<td>前一个不吐正文、或说没看到图，就换下一个</td>
+</tr>
+<tr>
+<td><code>auto</code></td>
+<td><code>true</code></td>
+<td>收到图自动看一眼；关掉就只能靠 <code>/看图</code></td>
+</tr>
+<tr>
+<td><code>max_images</code></td>
+<td><code>3</code></td>
+<td>一条消息最多看几张</td>
+</tr>
+<tr>
+<td><code>max_bytes</code></td>
+<td><code>6000000</code></td>
+<td>单张图上限，超了就跳过并说明</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td><code>60.0</code></td>
+<td>单次看图超时（秒）</td>
+</tr>
+<tr>
+<td><code>max_tokens</code></td>
+<td><code>300</code></td>
+<td>描述长度上限</td>
+</tr>
+<tr>
+<td><code>cache_seconds</code></td>
+<td><code>3600</code></td>
+<td>同图缓存多久</td>
+</tr>
+<tr>
+<td><code>keep_files</code></td>
+<td><code>true</code></td>
+<td>把看过的图存进 <code>data/vision</code></td>
+</tr>
+<tr>
+<td><code>keep_recent</code></td>
+<td><code>50</code></td>
+<td>只留最近这么多张</td>
+</tr>
+</tbody>
+</table>
+<p>几句实话：</p>
+<ul>
+<li>看图是<strong>额外一次模型调用</strong>，所以带图的回复会比平常慢几秒（描述会缓存，同一张图不会重复扣）。</li>
+<li>看图失败<strong>不会</strong>让她哑掉：她会照旧回你，只是看不到图里的东西。</li>
+<li>她「看」的其实是模型给的描述，所以认字、数数这类精细活儿偶尔会错；她会用自己的话说，不会假装精确。</li>
+<li><code>/看图 &lt;链接&gt;</code> 只认图片链接；分不清是不是图就直接当图去下，下不下来会说「没看成」。</li>
+</ul>
+<h3>识图踩过的两个坑</h3>
+<ol>
+<li><strong>请求形状只有一种能用</strong>：图片段必须是标准 OpenAI 的<br />
+<code>{"type":"image_url","image_url":{"url":"data:…"}}</code>。<br />
+<code>image_url</code> 直接给字符串、<code>{"type":"input_image"}</code>、Anthropic 的 <code>image</code>+<code>source</code><br />
+   这几种写法，代理一律回 <strong>503 <code>upstream_error</code></strong>；最阴的是少一层嵌套<br />
+   （<code>{"type":"image_url","url":"data:…"}</code>）：<strong>它返回 200，但图被悄悄丢掉了</strong> ——<br />
+   模型会客客气气地说「我还没看到图片，请上传后…」。现在 <code>vision.py</code> 认得出这种回答，<br />
+   当成「没看成」换下一个模型，<strong>绝不把「我没看到图」当描述发出去</strong>。</li>
+<li><strong>代理的通道池很小</strong>：并发一大就成片 503。<code>vision.py</code> 遇到 5xx 会等 1.5 秒重试一次，一般就好。</li>
+</ol>
+<p>顺带一条通用经验：<code>503 upstream_error</code> 这个文本既可能是「通道忙」，也可能是「你这个请求形状我不收」，<br />
+光看状态码分不出来 —— 先重试，再怀疑形状。</p>
+<h2>让她自己动手（<code>tools</code>）</h2>
+<p>她不只是动嘴 —— 有几件事她可以真的去做，做完把结果发出来。</p>
+<table>
+<thead>
+<tr>
+<th>手上的活</th>
+<th>她怎么写</th>
+<th>实际做什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>截图</td>
+<td><code>[[工具:截图]]</code></td>
+<td>Pillow <code>ImageGrab</code> 抓当前屏幕，缩放后发成图片（<strong>只有 QQ 通道发得出去</strong>，微信那边只收文字）</td>
+</tr>
+<tr>
+<td>系统信息</td>
+<td><code>[[工具:系统]]</code></td>
+<td>开机时长、内存占用、她自己的内存、CPU 核数、C/D 盘剩余</td>
+</tr>
+<tr>
+<td>压缩上下文</td>
+<td><code>[[工具:压缩]]</code></td>
+<td>把旧消息交给模型压成一段摘要存进 <code>kv</code>，然后删掉原始行</td>
+</tr>
+</tbody>
+</table>
+<p><strong>她自己会决定用不用。</strong> 每轮回复的上下文里都带一段「你能自己动手做的事」；她判断该动手就写标记，<br />
+<code>_send_text()</code> 解析出来后交给 <code>_run_tool()</code> 执行并把结果发出去。<strong>标记本身不会留在聊天里。</strong></p>
+<p><strong>几个设计上的讲究</strong></p>
+<ul>
+<li><strong>截图有闸门</strong>：<code>shot_cooldown_seconds</code> 冷却 + <code>shot_max_per_hour</code> 每小时上限，都记在 3600 秒滑窗里，超了就跳过并计数。</li>
+<li><strong>流式里半个标记不会漏出去</strong>：<code>split_partial_tool()</code> 会把 <code>[[工具:系</code> 这种没写完的尾巴留在缓冲区，等下一轮补齐再处理，不会当正文发出去。</li>
+<li><strong>压缩是自动的</strong>：<code>auto_compact_rows</code> 攒够条数就自己压一次。摘要存在 <code>kv</code> 里（key 是 <code>compact:&lt;会话&gt;</code>），<br />
+  每轮带进上下文的是「你还记得早些时候聊过这些（你自己压的摘要）：…」，<strong>原始消息行会被删掉</strong>；<br />
+<code>keep_recent</code> 保证最近几条永远还在，所以不会压到她自己忘了刚说过什么。</li>
+<li><strong>摘要要洗干净</strong>：模型爱把思考也吐出来（「我们需要回答用户中文请求…确保不超过150字…」）。<br />
+<code>_tidy_summary()</code> 负责掐掉开头的复述、认「摘要：」标签取正文、超长按句末截断 —— 不洗的话这些废话会一路带进后面每一轮。</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>配置项</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tools.enabled</code></td>
+<td><code>true</code></td>
+<td>总开关</td>
+</tr>
+<tr>
+<td><code>tools.screenshot</code></td>
+<td><code>true</code></td>
+<td>允许截图</td>
+</tr>
+<tr>
+<td><code>tools.sysinfo</code></td>
+<td><code>true</code></td>
+<td>允许报机器状况</td>
+</tr>
+<tr>
+<td><code>tools.compact</code></td>
+<td><code>true</code></td>
+<td>允许压缩上下文</td>
+</tr>
+<tr>
+<td><code>tools.file_read</code></td>
+<td><code>false</code></td>
+<td>读本地文件 —— <strong>默认关</strong>，因为会把文件内容发到群里</td>
+</tr>
+<tr>
+<td><code>tools.auto</code></td>
+<td><code>true</code></td>
+<td>是否在每轮上下文里带「你能自己动手做的事」这段说明</td>
+</tr>
+<tr>
+<td><code>tools.auto_max_per_turn</code></td>
+<td><code>1</code></td>
+<td>一轮最多动几次手</td>
+</tr>
+<tr>
+<td><code>tools.max_shot_edge</code></td>
+<td><code>1280</code></td>
+<td>截图最长边（超过就等比缩小）</td>
+</tr>
+<tr>
+<td><code>tools.shot_dir</code></td>
+<td><code>data/shots</code></td>
+<td>截图存放目录</td>
+</tr>
+<tr>
+<td><code>tools.keep_shots</code></td>
+<td><code>30</code></td>
+<td>只留最近多少张截图，旧的自动删</td>
+</tr>
+<tr>
+<td><code>tools.shot_cooldown_seconds</code></td>
+<td><code>30</code></td>
+<td>两次截图之间的最小间隔</td>
+</tr>
+<tr>
+<td><code>tools.shot_max_per_hour</code></td>
+<td><code>6</code></td>
+<td>每小时最多截几张</td>
+</tr>
+<tr>
+<td><code>tools.keep_recent</code></td>
+<td><code>6</code></td>
+<td>压缩时永远保留的最近消息条数</td>
+</tr>
+<tr>
+<td><code>tools.auto_compact_rows</code></td>
+<td><code>60</code></td>
+<td>攒够多少条新消息就自动压一次（<code>0</code> ＝不自动压）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>借来的本事（<code>skills</code>）</h2>
+<p>她自己的脾气是你写的人设；有些话题她「显得更懂」比较好看，那就让她借别人的脑子。<br />
+这套机制把本地 skill 目录里的 <code>SKILL.md</code> 读一眼，挑跟当前话题相关的塞进这一轮上下文，<br />
+<strong>最终仍然要用她自己的口气讲出来</strong>。</p>
+<pre><code class="language-yaml">skills:
+  enabled: true
+  dir: 'C:\Users\&lt;你&gt;\.dsh\skills'
+  allow: [goutoujunshi, nuwa-skill]
+  max_chars: 4000
+  per_skill:
+    goutoujunshi: 3000
+    nuwa-skill: 7000
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>配置项</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>skills.enabled</code></td>
+<td><code>true</code></td>
+<td>关掉就当她从没借过</td>
+</tr>
+<tr>
+<td><code>skills.dir</code></td>
+<td><code>C:\Users\&lt;你&gt;\.dsh\skills</code></td>
+<td>skill 根目录，一个子目录一份 <code>SKILL.md</code></td>
+</tr>
+<tr>
+<td><code>skills.allow</code></td>
+<td><code>[goutoujunshi, nuwa-skill]</code></td>
+<td>白名单，<strong>没写的不加载</strong> —— 免得几十份无关本事一起挤上下文</td>
+</tr>
+<tr>
+<td><code>skills.max_chars</code></td>
+<td><code>4000</code></td>
+<td>单轮注入总字数上限</td>
+</tr>
+<tr>
+<td><code>skills.per_skill</code></td>
+<td>见上</td>
+<td>单个 skill 的字数上限</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>什么时候用</strong>：消息里出现命中词才注入。恋爱/暧昧/约会/冷战 → 狗头军师；蒸馏某个人、造个 skill → 女娲。</li>
+<li><strong>注入的是思路，不是原文</strong>：标题、开头几百字正文、参考文件名；超长按 <code>per_skill</code> / <code>max_chars</code> 截断。</li>
+<li><strong>她不承认借过</strong>：人设里叮嘱过 —— 别背原文、别报菜名、别提「技能 / skill / 资料 / 参考」这些字。</li>
+<li><code>/技能</code> 看她手里有什么，<code>/技能 名字</code> 看某一份的开头。</li>
+</ul>
+<h3>思考过程不外泄（顺便救命）</h3>
+<p>她用的这个模型是「先长篇思考、再吐正文」的：思考走 <code>reasoning_content</code>，正文走 <code>content</code>。<br />
+坑在于 —— 它<strong>经常只思考、不吐正文</strong>（<code>content</code> 是空的），一轮下来一个字都没有。<br />
+于是分两层处理：</p>
+<ul>
+<li><strong>先保证不外泄</strong>：流式只收 <code>delta.content</code>，<code>reasoning_content</code> 只记字数、不进正文缓冲；<br />
+<code>strip_thinking()</code> 还会削掉「思考：」「分析：」「用户说：」这类旁白。</li>
+<li><strong>再保证有话说</strong>：正文为空时，<code>answer_from_reasoning()</code> 从思考里把她<strong>本来要说的那句</strong>捞回来 ——<br />
+  优先取带颜文字的那句，其次从后往前找干净句子（最多连带上上一句）；<br />
+  「字数大概 50 多字，可以。」「这样回答了正事，也接了梗。」这类自我点评、<br />
+<code>end</code> 这类流程残留、以及「应该保持沉默」这种心里盘算，全部丢掉。<br />
+  实在捞不到就沿 <code>fallback_models</code> 换备用模型，再不行才认输。</li>
+</ul>
+<p>捞回来的是<strong>她的台词</strong>，不是旁白 —— 群里看到的仍然是话，不是她的心里话。</p>
+<h2>让她上网（<code>net</code>）</h2>
+<p><code>fishbot/net.py</code> 是一个只用 httpx 的小爬虫外壳，没有第三方搜索 SDK。</p>
+<p><strong>她怎么找</strong>：按顺序试 <code>bing-rss</code> → <code>bing-html</code> → <code>baidu</code> → <code>sogou</code> 四个后端，<strong>每家的结果都先过一遍相关性过滤</strong><br />
+（拿查询里的中文词去比对标题/摘要/URL），谁命中的相关结果多就用谁；<strong>一条相关的都没有，就宁可说"没查到"</strong>，<br />
+也不把搜索结果页硬塞给模型 —— 早先搜「蓝色大肥鱼」时 bing 回的全是"蓝色是什么颜色"的色卡页，模型照着编了一堆胡说八道，<br />
+所以现在这条是硬规矩。</p>
+<p>中文长查询默认优先百度、其次搜狗（bing 对中文长句基本只抓第一个词）。百度被验证码挡住时会自动落到搜狗。</p>
+<p><strong>她什么时候自己查</strong>：<code>_auto_net()</code> 只看关键词，<strong>不会先问模型"要不要联网"</strong> —— 那要多花一整轮生成，太慢。<br />
+命中 URL 就直接 <code>fetch</code> 抓正文；命中「是什么/为什么/多少钱/最新/今天/天气/股价…」这类词才去搜。<br />
+<code>net.auto</code> 关掉就完全不自动查，只留 <code>/搜</code>、<code>/看</code> 两个命令。</p>
+<table>
+<thead>
+<tr>
+<th>配置项</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>net.enabled</code></td>
+<td><code>true</code></td>
+<td>关掉＝拔网线，<code>/搜</code> 会回「管理员把本鱼的网线拔了」</td>
+</tr>
+<tr>
+<td><code>net.max_results</code></td>
+<td><code>5</code></td>
+<td>每次最多看几条结果</td>
+</tr>
+<tr>
+<td><code>net.timeout</code></td>
+<td><code>20</code></td>
+<td>单次请求超时（秒）</td>
+</tr>
+<tr>
+<td><code>net.max_page_chars</code></td>
+<td><code>3000</code></td>
+<td>抓正文时最多读多少字</td>
+</tr>
+<tr>
+<td><code>net.cache_seconds</code></td>
+<td><code>600</code></td>
+<td>同一个查询/网址多久内不重复请求</td>
+</tr>
+<tr>
+<td><code>net.auto</code></td>
+<td><code>true</code></td>
+<td>是否允许她自动联网</td>
+</tr>
+<tr>
+<td><code>net.auto_max_per_turn</code></td>
+<td><code>1</code></td>
+<td>一轮对话里最多自动查几次</td>
+</tr>
+<tr>
+<td><code>net.show_sources</code></td>
+<td><code>true</code></td>
+<td>回答尾部附上「本鱼是从这些地方看来的」</td>
+</tr>
+</tbody>
+</table>
+<p>抓回来的正文和搜索摘要交给模型时，指令是<strong>用她自己的口气讲</strong>（别照抄、别念标题、别提"搜索结果"这几个字）；<br />
+模型调用失败就直接把原文摘回去，不会因为重写失败而哑掉。</p>
+<h2>表情包（<code>stickers</code>）</h2>
+<p>素材放 <code>assets/stickers/</code>，配一份 <code>manifest.json</code>：</p>
+<pre><code class="language-json">{&quot;happy&quot;: {&quot;file&quot;: &quot;happy.png&quot;, &quot;desc&quot;: &quot;笑得眯眼的蓝色虎鲸娘&quot;, &quot;keywords&quot;: [&quot;开心&quot;, &quot;高兴&quot;, &quot;得意&quot;], &quot;source&quot;: &quot;https://…&quot;}}
+</code></pre>
+<p>顶层写成数组或 <code>{"stickers": [...]}</code> 都认；没有 manifest 时会退化成扫目录、拿文件名当标签。</p>
+<p><strong>两种触发方式</strong>：</p>
+<ol>
+<li><strong>她自己要发</strong> —— 人设里教了她一个标记 <code>[[表情:开心]]</code>。<code>textutil.sanitize_output</code> 不会动这个标记，<br />
+   它一路活到 <code>_send_text</code>，由 <code>Stickers.parse()</code> 摘出来：标记单独成段就只发图，夹在句子里就"先说话、再补图"。</li>
+<li><strong>随机补一张</strong> —— 一轮回复里她自己没发过图、又掷中了 <code>probability</code>，就顺手补一张。默认 25%。</li>
+</ol>
+<p>流式回复里有个 <code>split_partial()</code>：<code>[[表情:开</code> 这种半个标记会被<strong>截下来留给下一轮</strong>，不会漏成半截乱码发出去。</p>
+<table>
+<thead>
+<tr>
+<th>配置项</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stickers.enabled</code></td>
+<td><code>true</code></td>
+<td>总开关</td>
+</tr>
+<tr>
+<td><code>stickers.dir</code></td>
+<td><code>assets/stickers</code></td>
+<td>素材目录（相对项目根）</td>
+</tr>
+<tr>
+<td><code>stickers.manifest</code></td>
+<td><code>manifest.json</code></td>
+<td>清单文件名</td>
+</tr>
+<tr>
+<td><code>stickers.probability</code></td>
+<td><code>0.25</code></td>
+<td>随机补图概率</td>
+</tr>
+<tr>
+<td><code>stickers.cooldown_seconds</code></td>
+<td><code>60</code></td>
+<td>两张图之间至少隔多久</td>
+</tr>
+<tr>
+<td><code>stickers.max_per_hour</code></td>
+<td><code>20</code></td>
+<td>每小时最多发几张</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>让她自己玩（自主活动）</h2>
+<p>她不是只会等人说话的应答机。<code>autonomy</code> 打开后，她会隔一段时间自己找点事做，<br />
+做完的结果<strong>会写进记忆库</strong>，下次聊天时她真的能想起来自己干过什么。</p>
+<table>
+<thead>
+<tr>
+<th>动作</th>
+<th>干什么</th>
+<th>默认</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>signature</code></td>
+<td>改自己的 QQ 个性签名，写一句符合此刻心情的话</td>
+<td>开</td>
+</tr>
+<tr>
+<td><code>diary</code></td>
+<td>记一句心情（写进 <code>kv</code>），聊天时会带进上下文</td>
+<td>开</td>
+</tr>
+<tr>
+<td><code>chat</code></td>
+<td>主动私聊白名单里的人，接着上次没聊完的话</td>
+<td>开（白名单默认空）</td>
+</tr>
+<tr>
+<td><code>group</code></td>
+<td>在指定群里主动冒个泡</td>
+<td>关（白名单默认空）</td>
+</tr>
+<tr>
+<td><code>nickname</code></td>
+<td>改 QQ 昵称</td>
+<td>关（比较显眼，要单独开 <code>allow_nickname_change</code>）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>安全闸</strong>（都会让动作静默跳过，不会硬来）：</p>
+<ul>
+<li><code>max_actions_per_hour</code> —— 每小时最多折腾几次，默认 3</li>
+<li><code>quiet_hours</code> —— 默认 <code>00:00-08:00</code> 睡觉，不活动</li>
+<li><code>min_idle_minutes</code> —— 最近有人跟她说话，就先安分 20 分钟</li>
+<li><code>follow_up_after_hours</code> —— 她自己最后一句没人接时，<strong>隔 3 小时才允许回访</strong>，<br />
+  所以不会出现"追着人刷屏"</li>
+<li><code>proactive_private_allow</code> / <code>proactive_group_allow</code> —— <strong>空 = 绝不主动找人</strong>。<br />
+  会打扰别人的动作必须显式开白名单，这是设计上的硬边界。</li>
+</ul>
+<p>想立刻看她表演一次，管理员发 <code>/玩</code>。<code>/状态</code> 最后一行会显示自主活动的次数、<br />
+上次做了什么，以及"想玩但忍住了"的原因。</p>
+<p>一个真跑出来的例子（<code>/玩</code> 的输出）：</p>
+<pre><code>本鱼刚刚自己玩了一下：把个性签名改成「咕噜噜~在线等一口token，挺急的。」
+本鱼刚刚自己玩了一下：记了条心情：咕噜噜~ 今天偷吃了2346个token，肚子圆滚滚…
+本鱼刚刚自己玩了一下：主动找 987654321 搭话：诶对了，那张图你还没告诉本鱼是啥呢~
+</code></pre>
+<hr />
+<h2>配置说明</h2>
+<p>完整注释见 <code>config.yaml</code>，几个最常调的：</p>
+<table>
+<thead>
+<tr>
+<th>配置项</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>llm.model</code></td>
+<td><code>deepseek-v4.1-flash-free</code></td>
+<td>换模型只改这一行，<code>/models</code> 里有 60 个可选</td>
+</tr>
+<tr>
+<td><code>llm.fallback_models</code></td>
+<td><code>[deepseek-v4.1-flash-1017]</code></td>
+<td>主模型捞不出正文／429／5xx 时换下一个，全都不行她才叹气</td>
+</tr>
+<tr>
+<td><code>llm.stream</code></td>
+<td><code>true</code></td>
+<td>关掉就是"想完一整段再发"</td>
+</tr>
+<tr>
+<td><code>llm.retries</code></td>
+<td><code>2</code></td>
+<td>429 / 5xx / 网络错误的自动重试次数</td>
+</tr>
+<tr>
+<td><code>llm.timeout</code></td>
+<td><code>60</code></td>
+<td>单次请求超时；推理型模型首字慢，别调太小</td>
+</tr>
+</tbody>
+</table>
+<p>| <code>persona.prompt_file</code> | <code>personas/feiyu.md</code> | 人设正文，改完发 <code>/重载</code> 立刻生效 |<br />
+| <code>persona.max_chars</code> | <code>90</code> | 期望的回复长度（软约束，写进 system prompt） |<br />
+| <code>behavior.group_require_at</code> | <code>false</code> | 群里不用 @ 也能接话；设 <code>true</code> 退回「必须 @ 才回」 |<br />
+| <code>behavior.group_reply_probability</code> | <code>0.35</code> | 别人纯闲聊时的插话概率，嫌吵设 <code>0</code> |<br />
+| <code>behavior.group_directed_probability</code> | <code>0.85</code> | 话像在问她 / 在聊她时的接话概率 |<br />
+| <code>behavior.group_ignore_at_others</code> | <code>true</code> | 消息里 @ 的是别人（没 @ 她）就不接 |<br />
+| <code>behavior.per_session_cooldown</code> | <code>1.5</code> | 同一会话两条回复的最小间隔（秒） |<br />
+| <code>llm.allow_reasoning_fallback</code> | <code>true</code> | 正文为空时允许从思考里回收「她本来要说的那句」（回收器会丢掉盘算、自我点评与流程残留） |<br />
+| <code>llm.extra_body</code> | <code>{reasoning_effort: low, chat_template_kwargs: {thinking: false}}</code> | 透传给上游，想让模型少想一点、多吐正文（实测提高概率，但不保证） |</p>
+<h3>嫌回复慢？先量再调</h3>
+<p>这个代理上的模型<strong>延迟差别极大</strong>，而且首字慢通常不是网络问题，是模型在"想"。<br />
+同一个系统提示、同一句话，实测：</p>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>全程</th>
+<th>正文</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>deepseek-v4.1-flash-free</code></strong></td>
+<td><strong>10～20s</strong></td>
+<td>靠回收层</td>
+<td><strong>现在的主模型</strong>：约一半轮次直接吐正文，另一半全在思考里（思考 200～1100 字），回收层兜住 ✅</td>
+</tr>
+<tr>
+<td><code>deepseek-v4.1-flash-1017</code></td>
+<td>4.0s</td>
+<td>72 字</td>
+<td>备选；同族，思考 346 字</td>
+</tr>
+<tr>
+<td><code>deepseek-v4-pro</code></td>
+<td>3.9s</td>
+<td>77 字</td>
+<td>思考 0 字，最快最稳的一档</td>
+</tr>
+<tr>
+<td><code>deepseek-v4-pro-cheap</code></td>
+<td>3.9s</td>
+<td>52 字</td>
+<td>思考 0 字</td>
+</tr>
+<tr>
+<td><code>gpt-6.1-sol-fast×8</code></td>
+<td>3.2s</td>
+<td>68 字</td>
+<td>快，但一口气道歉，像客服不像她</td>
+</tr>
+<tr>
+<td><code>qwen3.8-flash-low</code></td>
+<td>11.2s</td>
+<td>62 字</td>
+<td>会敷衍成「在的，你说。」</td>
+</tr>
+<tr>
+<td><code>deepseek-v4-flash-free</code></td>
+<td>18.4s</td>
+<td><strong>0 字</strong></td>
+<td>思考 288 字 ❌</td>
+</tr>
+<tr>
+<td><code>deepseek-v4-flash-cheap</code></td>
+<td>7.3s</td>
+<td><strong>0 字</strong></td>
+<td>思考 563 字 ❌</td>
+</tr>
+<tr>
+<td><code>deepseek-v4.1-flash</code></td>
+<td>5.3s</td>
+<td><strong>0 字</strong></td>
+<td>思考 479 字 ❌</td>
+</tr>
+</tbody>
+</table>
+<p>换模型前先测一下最靠谱（人设 + 一句"在吗"最接近真实场景）：</p>
+<pre><code class="language-bash">python -c &quot;
+import httpx, time, json
+c = httpx.Client(trust_env=False, timeout=120)   # trust_env=False 绕开本机代理变量
+body = {'model': 'MODEL_NAME', 'messages': [{'role':'user','content':'在吗'}], 'stream': True}
+t0 = time.perf_counter()
+with c.stream('POST', 'http://127.0.0.1:8792/v1/chat/completions',
+              headers={'Authorization': 'Bearer 你的key'}, json=body) as r:
+    for line in r.iter_lines():
+        if line.startswith('data: ') and '\&quot;content\&quot;' in line:
+            print('首字 %.1fs' % (time.perf_counter() - t0)); break
+&quot;
+</code></pre>
+<p>另外 <code>behavior.typing_delay</code> 是<strong>人为</strong>加的延迟（每字 12ms + 最低 500ms），<br />
+把 <code>enabled</code> 设成 <code>false</code> 可以再快半秒。注意几个常见坑：</p>
+<ul>
+<li>有些模型（<code>kimi-K3</code>、<code>GLM-5.3</code>、<code>gpt-5.6-luna</code>）在这个代理上直接回 <code>服务暂时不可用</code>，别选</li>
+<li>想真正「关掉思考」：<code>reasoning_effort: none / minimal</code>、<code>thinking: {type: disabled}</code>、<code>enable_thinking: false</code>、<br />
+<code>chat_template_kwargs: {thinking: false}</code>、assistant prefill 续写 —— 一轮全试过。结论是<strong>没有哪个开关能稳定关掉</strong>，<br />
+  同一份输入同一组参数时好时坏（直接吐正文的概率约一半）。<code>extra_body</code> 里现在挂着 <code>reasoning_effort: low</code> +<br />
+<code>chat_template_kwargs: {thinking: false}</code>，能提高成功率，但别指望一定生效 —— 真正兜底的是思考回收层</li>
+<li><strong>踩过的最大的坑</strong>：<code>-free</code> 这一批模型会把<strong>全部输出塞进 <code>reasoning_content</code>，<code>content</code> 永远是空的</strong>。流式下她一个字都吐不出来，消息就被静默跳过 —— 群里「@ 她也不回话」正是这么来的。现在三道保险：正文为空 → 回收层从思考里捞 → 还空就沿 <code>fallback_models</code> 换模型 → 全不行才回一句兜底话，<strong>绝不默不作声</strong></li>
+<li>她的思考内容<strong>不会整段漏进回复</strong>：回收层只取「她本来要说的那句」，自我点评、字数汇报、<code>end</code> 残留、心里盘算一律丢掉。历史上被当成回复存进库的那几条思考（<code>#295 / #299 / #301 / #306</code>）已经删了，免得她照着学</li>
+<li><code>deepseek-v4-flash-low</code>、<code>qwen3.8-max-low</code> 会 ReadTimeout<br />
+| <code>behavior.global_concurrency</code> | <code>4</code> | 同时进行的模型请求上限 |<br />
+| <code>behavior.rate_limit_per_minute</code> | <code>20</code> | 单会话每分钟回复上限，防刷屏 |<br />
+| <code>behavior.typing_delay</code> | 开 | 打字延迟（每字 12ms，夹在 0.5–0.8s），关掉回复更利落 |<br />
+| <code>behavior.split_reply</code> | <code>true</code> | 长回复拆成多条；<code>split_max_chars</code> 控制单条上限 |<br />
+| <code>memory.max_messages</code> | <code>16</code> | 带进上下文的历史条数 |<br />
+| <code>memory.ttl_hours</code> | <code>168</code> | 超过一周的旧上下文不再带入 |<br />
+| <code>autonomy.enabled</code> | <code>true</code> | 自主活动总开关 |<br />
+| <code>autonomy.interval_minutes</code> | <code>45</code> | 两次活动之间的基础间隔（±<code>jitter</code>） |<br />
+| <code>autonomy.actions</code> | <code>[signature, diary, chat]</code> | 候选动作池，见「让她自己玩」一节 |<br />
+| <code>autonomy.proactive_private_allow</code> | <code>[]</code> | <strong>空 = 绝不主动找人</strong>，会打扰人的动作必须显式开 |<br />
+| <code>autonomy.follow_up_after_hours</code> | <code>3</code> | 自己上句没人接，隔这么久才允许回访 |</li>
+</ul>
+<p><strong>环境变量覆盖</strong>（适合写进启动脚本，避免 key 进仓库）：</p>
+<pre><code>FISHBOT_CONFIG          配置文件路径
+FISHBOT_LLM_BASE_URL    模型接口地址
+FISHBOT_LLM_API_KEY     模型 key
+FISHBOT_LLM_MODEL       模型名
+FISHBOT_WS_URL          QQ 端 WebSocket 地址
+FISHBOT_ACCESS_TOKEN    OneBot token
+FISHBOT_LOG_LEVEL       日志级别
+</code></pre>
+<hr />
+<h2>改人设</h2>
+<p>打开 <code>personas/feiyu.md</code>，里面分四块：</p>
+<ol>
+<li><strong>你是谁</strong> —— 外观（耳侧的小鲸鱼鳍会随情绪抖动、围裙上印着白色小鲸鱼）</li>
+<li><strong>性格</strong> —— 贪吃、嘴硬心软、被叫"大肥鱼"会小声抗议、聪明但爱摸鱼</li>
+<li><strong>说话方式</strong> —— 短句、自称"本鱼/肥鱼"、"咕噜噜~""吧唧吧唧""嗝~"</li>
+<li><strong>硬性规则</strong> —— 只输出台词、不承认自己是 AI、不想说话就输出 <code>[沉默]</code></li>
+</ol>
+<p>改完在 QQ 里发一句 <code>/重载</code> 就行，不用重启进程。<br />
+机器人每次拼接 system prompt 时会额外塞进去：当前场景（私聊/群聊）、对方昵称、<br />
+今日已偷吃的 token 数、饥饿度（离上次回复越久越饿）、群里刚才在聊什么。</p>
+<hr />
+<h2>token 账本</h2>
+<p>每次调用模型都会往 <code>usage_log</code> 表写一行（prompt / completion / total / 是否估算）。<br />
+<code>/token</code> 返回的就是它：</p>
+<pre><code>本鱼今天偷吃了 3394 个 token（3 口），这段关系里吃了 3394 个，有生以来一共吞掉 3394 个。嗝~
+</code></pre>
+<p>流式响应里如果上游没返回 <code>usage</code>，会按字符数估算并标记 <code>estimated=1</code>，不会凭空丢账。</p>
+<hr />
+<h2>架构速览</h2>
+<pre><code>QQ ── OneBot v11 WS ──&gt; onebot.py ──&gt; bot.py.on_event
+                                       ├─ 命令分发（不花钱）
+                                       ├─ 策略过滤（黑白名单 / 静音 / 冷却 / 限流）
+                                       ├─ 触发判定（@ / 叫名字 / 随机插话）
+                                       ├─ memory.py.history()  取最近上下文
+                                       ├─ persona.py           拼 system prompt
+                                       └─ llm.py 流式生成 ──&gt; textutil 清洗分句 ──&gt; 发回 QQ
+</code></pre>
+<p>几个刻意的设计选择：</p>
+<ul>
+<li><strong>不自己实现 QQ 协议</strong>，走 OneBot v11：生态成熟，NapCat / Lagrange 都能用。</li>
+<li><strong>记忆里不传 OpenAI <code>name</code> 字段</strong>：规范只允许 <code>[a-zA-Z0-9_-]</code>，中文昵称会被严格服务端拒绝，<br />
+  所以群聊昵称以 <code>【昵称】内容</code> 的形式写进正文。</li>
+<li><strong>输出清洗会把 <code>[CQ:</code> 换成全角</strong>：防止模型输出被 OneBot 当 CQ 码执行。</li>
+<li><strong>流式有 8 字门槛</strong>：避免 <code>[沉默]</code> 这种控制标记被当成正经回复发出去。</li>
+<li><strong>写库前统一清洗孤立代理对</strong>：Windows 控制台按 GBK 解码 UTF-8、或上游发来半截 emoji 时，<br />
+  字符串会混进 <code>U+DC80–U+DCFF</code>，直接写 sqlite 会抛 <code>UnicodeEncodeError</code>，现在统一替换为 <code>�</code>。</li>
+</ul>
+<hr />
+<h2>测试</h2>
+<pre><code class="language-powershell">python tests\test_e2e.py
+</code></pre>
+<p>不需要真的 QQ，也不需要真的模型：测试会起一个假模型服务（含 SSE 流式与 500 故障注入）和一个假<br />
+QQ 端（正向 WS 服务端），再用子进程把机器人真跑起来，覆盖 20 项断言：</p>
+<pre><code>① 正向 WebSocket 连接成功          ② 私聊收到回复
+②b 请求体带 system 人设            ②c 模型名按配置透传
+③  上下文被记住（2 → 4 条）        ④ /token 返回真实 token 数字
+⑤  /重置 清空记忆                  ⑤b 重置后请求只剩 system + user
+⑥  群聊被 @ 时回复                 ⑥b 群聊正文带【昵称】前缀
+⑦  群聊没被 @ 时不插话             ⑧ 长回复被拆成多条
+⑨  上游 500 时发卖萌兜底句         ⑩ 普通成员 /闭嘴 被拒
+⑩b 管理员 /闭嘴 生效               ⑩c 静音后被 @ 也不回
+⑩d 管理员 /起床 恢复               ⑩e 解除静音能正常接话
+⑪  进程全程存活                    ⑪b 假模型收到多次调用
+</code></pre>
+<hr />
+<h2>让她开口说话（语音）</h2>
+<p>她默认会自己开口：<strong>大约每三条回复里有一条是语音</strong>，其余还是打字。想固定下来就用命令。</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/语音</code></td>
+<td>切换本会话「只用说的 / 只打字」，并回报当前状态</td>
+</tr>
+<tr>
+<td><code>/语音 开</code> / <code>/语音 关</code></td>
+<td>明确打开 / 关掉本会话的语音</td>
+</tr>
+<tr>
+<td><code>/语音 说 文本</code></td>
+<td>立刻把这句话念出来（不用等她生成）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>这条链路是怎么走通的</strong></p>
+<ol>
+<li><code>fishbot/tts.py</code> 用 <strong>edge-tts</strong> 合成 mp3（默认音色 <code>zh-CN-XiaoxiaoNeural</code>，是按录音量出来的音高挑的；早先写的 <code>zh-CN-XiaobeiNeural</code> 这个名字其实不存在，见下）</li>
+<li>通过 OneBot 发一个 <code>{"type":"record","data":{"file":"file:///…mp3"}}</code> 消息段</li>
+<li><strong>NapCat 自带 ffmpeg 插件</strong>把它转成 QQ 要的 silk —— 系统里不需要装 ffmpeg</li>
+</ol>
+<p><strong>音色：标准普通话，不要方言</strong></p>
+<p>参考录音：<code>&lt;录音目录&gt;\录音机-20261020-2003.m4a</code>（13.95 秒），<br />
+拆成 16k 单声道逐帧自相关求基频，中位基频 <strong>258.1 Hz</strong>。</p>
+<p><strong>这里踩过一个坑，值得记下来</strong>：一开始配置里写的是 <code>zh-CN-XiaobeiNeural</code>，<br />
+看着很像 Azure 的命名规范，其实<strong>这个名字根本不存在</strong>。Edge 服务端不会报错，<br />
+它会拿这串名字去模糊匹配，最后落到 <code>zh-CN-liaoning-XiaobeiNeural</code> ——<br />
+<strong>辽宁东北话</strong>音色（服务端给的标签就是 <code>Dialect</code>）。所以那阵子她说话一股地方口音。</p>
+<p>证据：同一段文本、同一组参数，两个名字产出的音频<strong>字节完全一样</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>写进配置的音色</th>
+<th>实际生效</th>
+<th>音频 sha256（前 16 位）</th>
+<th>字节</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>zh-CN-XiaobeiNeural</code>（不存在）</td>
+<td>辽宁话</td>
+<td><code>ef1c1fd71af1ec89</code></td>
+<td>40752</td>
+</tr>
+<tr>
+<td><code>zh-CN-liaoning-XiaobeiNeural</code></td>
+<td>辽宁话</td>
+<td><code>ef1c1fd71af1ec89</code></td>
+<td>40752</td>
+</tr>
+</tbody>
+</table>
+<p>同类陷阱还有 <code>zh-CN-XiaoniNeural</code> → 陕西话。</p>
+<p>所以现在用 <strong><code>zh-CN-XiaoxiaoNeural</code></strong>（标准普通话，标签 Warm，约 254 Hz），<br />
+靠 <code>pitch: "+4Hz"</code> 补到接近录音的 258 Hz。<code>fishbot/tts.py</code> 里加了守卫：<br />
+合成前先拉真实音色列表对一遍，名字不在列表里、或者命中方言关键字，<br />
+就自动换成 <code>zh-CN-XiaoxiaoNeural</code> 并打一条 <code>WARNING</code>，不让服务端再悄悄糊弄过去。</p>
+<p><strong>把语速压下来、把抖动捏死</strong></p>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>之前</th>
+<th>现在</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>voice</code></td>
+<td>zh-CN-XiaoxiaoNeural</td>
+<td><code>zh-CN-XiaoyiNeural</code></td>
+<td>小艺更年轻、更甜，接近录音那个调</td>
+</tr>
+<tr>
+<td><code>rate</code></td>
+<td>+6%</td>
+<td><code>-14%</code></td>
+<td>挑一个快的音色再放慢，比硬挑慢音色自然（4.43 → 3.44 字/秒）</td>
+</tr>
+<tr>
+<td><code>pitch</code></td>
+<td>+4Hz</td>
+<td><code>-16Hz</code></td>
+<td>压到 280 Hz 附近，贴近录音的 258 Hz</td>
+</tr>
+<tr>
+<td><code>rate_jitter</code> / <code>pitch_jitter</code></td>
+<td>3 / 2</td>
+<td><code>2 / 0</code></td>
+<td>音高一点都不抖 —— 随机抖动是「机器感」最大的来源</td>
+</tr>
+</tbody>
+</table>
+<p>情绪带来的起伏仍然保留（<code>MOOD_DELTA</code>：激动 +10% / +12 Hz，敷衍 −12% / −9 Hz），<br />
+只是那些一眼假的随机晃动被拿掉了。</p>
+<p><strong>一次合成一条，不要碎</strong></p>
+<p>以前是逐句合成，每句都重新掷一次抖动，听着像几个人轮流说话；超过 <code>max_chars</code> 还会直接退回打字，<br />
+于是「一会儿说话一会儿打字」。现在 <code>TTS.synth()</code> 给整段话只算一次语速/音高，<br />
+超长才按标点切段，段与段之间用 ffmpeg 的 concat demuxer 拼回<strong>一条</strong> mp3：</p>
+<table>
+<thead>
+<tr>
+<th>输入长度</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>100 字</td>
+<td>一条 20.18 s（121 KB）</td>
+</tr>
+<tr>
+<td>300 字</td>
+<td>一条 59.59 s（358 KB），分 2 段拼成</td>
+</tr>
+</tbody>
+</table>
+<p>合成前的 <code>clean_for_speech()</code> 还会把不适合念的东西洗掉：括号旁白换成逗号（不断句）、<br />
+颜文字和 emoji 直接删、连续感叹号/省略号压掉、中文之间的空格去掉（否则会念出停顿）。<br />
+<code>~</code> 特意保留 —— 那是她撒娇的地方。</p>
+<p><strong>没有做音色克隆</strong>：本机只有一块 2048 MB 的集显，模型代理上<br />
+<code>/v1/audio/speech</code>、<code>/v1/audio/tts</code>、<code>/v1/voice/clone</code> 全是 404 / 501，<br />
+所以「合成她的声音」实际是<strong>按录音的音高挑一个最接近的标准音色，再把语速语调调过去</strong>。</p>
+<p>NapCat 日志里能直接看到：</p>
+<pre><code>语音文件C:/…/voice-20261019-211405-2096d7.mp3需要转换成silk
+语音文件已就绪: C:\Users\&lt;你&gt;\Documents\Tencent Files\NapCat\temp\&lt;uuid&gt; 时长: 4.4
+发送 -&gt; 私聊 (987654321) [语音 4s]
+</code></pre>
+<p><strong>配置（<code>config.yaml</code> 的 <code>tts</code> 段）</strong></p>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>true</td>
+<td>语音总开关</td>
+</tr>
+<tr>
+<td><code>engine</code></td>
+<td>edge</td>
+<td><code>edge</code>=联网神经网络音色；<code>sapi</code>=系统离线语音；<code>auto</code>=先 edge 后 sapi</td>
+</tr>
+<tr>
+<td><code>voice</code></td>
+<td>zh-CN-XiaoyiNeural</td>
+<td>edge 音色（名字不存在或带方言会<strong>自动换成</strong> zh-CN-XiaoxiaoNeural）</td>
+</tr>
+<tr>
+<td><code>sapi_voice</code></td>
+<td>Microsoft Huihui Desktop</td>
+<td>离线兜底音色</td>
+</tr>
+<tr>
+<td><code>rate</code> / <code>volume</code> / <code>pitch</code></td>
+<td>-14% / +0% / -16Hz</td>
+<td>语速、音量、音调</td>
+</tr>
+<tr>
+<td><code>lively</code></td>
+<td>true</td>
+<td>每次合成在基础值上再抖一点</td>
+</tr>
+<tr>
+<td><code>rate_jitter</code> / <code>pitch_jitter</code></td>
+<td>2 / 0</td>
+<td>轻微抖动（音高别抖，一抖就显机器）</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td>auto</td>
+<td><code>off</code>=永不发；<code>command</code>=只有 <code>/语音 开</code> 过才发；<code>auto</code>=按概率自动发</td>
+</tr>
+<tr>
+<td><code>probability</code></td>
+<td>0.35</td>
+<td>auto 模式下每条回复转语音的概率</td>
+</tr>
+<tr>
+<td><code>max_chars</code></td>
+<td>220</td>
+<td>一条语音的朗读上限；超了自动切段再拼回一条（不是「超长就改成打字」）</td>
+</tr>
+<tr>
+<td><code>ffmpeg</code></td>
+<td>空=自动找</td>
+<td>分段拼接用；本机指向 imageio_ffmpeg 自带的 ffmpeg.exe（PATH 里没有 ffmpeg）</td>
+</tr>
+<tr>
+<td><code>send_text_along</code></td>
+<td>false</td>
+<td>发语音时是否再补一份文字（默认不补：语音就只发语音）</td>
+</tr>
+<tr>
+<td><code>dir</code> / <code>keep_files</code></td>
+<td>data/voice / 60</td>
+<td>音频目录与保留条数</td>
+</tr>
+</tbody>
+</table>
+<p><strong>几个坑</strong></p>
+<ul>
+<li>合成或发送失败会<strong>自动退回文字</strong>，不会因为语音挂了就不理人</li>
+<li>edge-tts 需要联网；断网就把 <code>engine</code> 改成 <code>sapi</code>，用系统音色离线合成（本机有 Huihui / Yaoyao / Kangkang）</li>
+<li>合成前会临时清掉 <code>http_proxy</code> / <code>no_proxy</code> 等环境变量——本机这几个变量是坏的（大小写冲突 + 端口畸形），aiohttp 会读它们然后连不上</li>
+<li>超长回复<strong>不会</strong>退回打字：先切段合成，再用 ffmpeg 拼成一条；只有在找不到 ffmpeg 时才退回文字</li>
+<li>想要「音源」的话，freesound.org 这类音效库帮不上——它主要是环境音/拟音，APIv2 还要 token</li>
+</ul>
+<p><strong>关于 freesound.org</strong></p>
+<p>试过了，它帮不上「合成她的声音」这件事：</p>
+<ul>
+<li>freesound 是<strong>音效库</strong>（气泡声、水声、UI 提示音那类），不含可用的中文语音素材；</li>
+<li>想批量取素材得走 APIv2，<strong>要注册申请 token</strong>；不注册只能在搜索页里抠公开的 preview mp3；</li>
+<li>已顺手抓了两个备用音效放在 <code>assets/sfx/</code>（<code>bubble.mp3</code> 气泡、<code>cute_pop.mp3</code> 提示音，带 <code>manifest.json</code>），目前<strong>没有接到任何动作上</strong>，只是备着。</li>
+</ul>
+<p>真正把音色对上录音的做法见上面那张基频对照表 —— 靠挑音色 + 调语速音高，不是靠素材拼接。</p>
+<h2>常开与自愈（看门狗）</h2>
+<p>想让她 24 小时在线，光"启动一次"是不够的——实测过夜 7 小时，QQ 被腾讯踢下线后<br />
+NapCat 只重启了 Worker、<strong>OneBot 的 3001 端口再没回来</strong>，而机器人只会傻傻重连。<br />
+所以现在有三层保障：</p>
+<p><strong>第一层：电源</strong></p>
+<pre><code class="language-powershell">powercfg /change standby-timeout-ac 0    # 插电时永不睡眠
+powercfg /change hibernate-timeout-ac 0  # 不 hibernat
+powercfg /change monitor-timeout-ac 15   # 屏幕照常 15 分钟关
+powercfg /change disk-timeout-ac 0
+</code></pre>
+<p><strong>第二层：开机自启</strong></p>
+<p>启动文件夹里放了 <code>qq-fish-bot.bat</code>：</p>
+<pre><code>C:\Users\&lt;你&gt;\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\qq-fish-bot.bat
+</code></pre>
+<p>内容只有一行 —— 最小化调起 <code>boot_all.bat</code>。登录桌面后自动全启（独立版 NapCat + 机器人）。</p>
+<blockquote>
+<p>2026-10-23 起，NapCat 用的是<strong>独立版</strong>（<code>&lt;NapCat 目录&gt;\shell_node</code>）——<br />
+它自带一份 QQ 运行时（<code>node.exe</code> + <code>wrapper.node</code> + <code>QQNT.dll</code>），<br />
+所以既不需要开你自己的 QQ，也不会去杀 <code>QQ.exe</code>。</p>
+</blockquote>
+<p><strong>第三层：看门狗</strong>（<code>watchdog.py</code>，计划任务每 30 分钟跑一次）</p>
+<table>
+<thead>
+<tr>
+<th>检查项</th>
+<th>判据</th>
+<th>坏了怎么修</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>QQ 通道</td>
+<td><code>127.0.0.1:3001</code> 在监听</td>
+<td>跑 <code>boot_napcat.bat</code>：拉起独立版 NapCat（不碰你的 QQ）→ 等端口</td>
+</tr>
+<tr>
+<td>微信通道</td>
+<td>有 <code>Weixin.exe</code> 进程</td>
+<td>拉起 <code>C:\Program Files\Tencent\Weixin\Weixin.exe</code></td>
+</tr>
+<tr>
+<td>机器人本体</td>
+<td><code>data/heartbeat</code> 文件比 300 秒新</td>
+<td>跑 <code>run_bot.bat</code>：<code>.venv\Scripts\python.exe -m fishbot</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>旧注入方式为什么废了</strong>：以前是 <code>NapCatWinBootMain.exe</code> 把钩子注进<br />
+<code>C:\Program Files\Tencent\QQNT\QQ.exe</code>，2026-10-23 起 QQ 主进程注入后立刻退出，<br />
+OneBot 的 3001 再也不回来（还会把你的主号踢到登录界面）。独立版没有这个毛病。<br />
+代价：小号的登录票据还是要有的。票据失效时（腾讯风控会把本地票据清掉）<br />
+打开 <a href="http://127.0.0.1:6099/webui/">http://127.0.0.1:6099/webui/</a> 用手机 QQ 扫一次码即可，之后 <code>-q</code> 快速登录又能用了。</p>
+<p><strong>为什么修复要绕一道 WMI</strong>：计划任务跑完会把 job object 里的整棵进程树带走，<br />
+被任务直接拉起的机器人活不过几分钟（日志里连报错都没有，就那么没了）。<br />
+所以三种修复都改成 <code>Invoke-CimMethod Win32_Process Create</code> 派生 ——<br />
+父进程是 <code>WmiPrvSE</code>，不在任务的 job 里，谁也带不走它。</p>
+</blockquote>
+<p>修完会<strong>给你 QQ 发一条报备</strong>（发给 <code>watchdog.py</code> 里的 <code>OWNER_QQ</code>）。还有两个闸：<br />
+每小时最多修 6 次（<code>MAX_REPAIRS_PER_HOUR</code>，状态存 <code>data/watchdog_state.json</code>），<br />
+修不动就只报备不再反复折腾。日志在 <code>data/watchdog.log</code>。</p>
+<p>计划任务（已注册）：</p>
+<pre><code class="language-bat">schtasks /query  /tn FishBotWatchdog
+schtasks /change /tn FishBotWatchdog /disable    :: 暂停
+schtasks /change /tn FishBotWatchdog /enable     :: 恢复
+</code></pre>
+<p>手动看一眼（不改动任何东西）：</p>
+<pre><code class="language-bat">cd /d &lt;仓库目录&gt;
+.venv\Scripts\python.exe watchdog.py --dry-run
+</code></pre>
+<p><strong>想手动接管时：双击 <code>stop_bot.bat</code></strong> —— 它会停掉机器人和微信桥接，并把看门狗任务暂停<br />
+（<strong>不动 NapCat 和你的 QQ/微信</strong>）。重新开就双击 <code>boot_all.bat</code>。</p>
+<hr />
+<h2>故障排查</h2>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>原因 / 处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>日志一直刷"正在重连"</td>
+<td>NapCat 那边没配 WebSocket 服务端，或端口/token 不一致；确认消息格式是 <strong>array</strong></td>
+</tr>
+<tr>
+<td>连接成功但完全不回复</td>
+<td>可能命中了冷却、限流、静音、黑白名单，或 <code>group_ignore_at_others</code> 拦下了（消息 @ 的是别人）；再看 <code>fishbot.log</code> 里有没有 <code>一个字的正文都没拿到</code></td>
+</tr>
+<tr>
+<td>发了图她像没看见</td>
+<td>看日志里那行 <code>识图：…看过 N 张（缓存 N／失败 N）</code>；失败为 N 说明图没取到（图片过期、超过 <code>max_bytes</code>）或看图模型不给正文，换 <code>vision.model</code> 试试</td>
+</tr>
+<tr>
+<td>她在群里接话太多 / 太少</td>
+<td>调 <code>group_directed_probability</code>（像在跟她说话）与 <code>group_reply_probability</code>（纯闲聊）；只想被 @ 才动就把两个都设 <code>0</code>，<code>group_require_at</code> 设回 <code>true</code></td>
+</tr>
+<tr>
+<td>@ 她也不回，日志里写「正文为空」</td>
+<td>主模型把话全吞进思考里了：回收层先捞一遍，捞不到沿 <code>llm.fallback_models</code> 换下一个，三个都空才认输（日志里 <code>这轮只能认输</code>）</td>
+</tr>
+<tr>
+<td>她把思考过程发到群里了</td>
+<td>回收层只捞「她本来要说的那句」，盘算与自我点评会丢掉；流式也只收 <code>content</code>。历史上被污染的几条已经清了</td>
+</tr>
+<tr>
+<td>401 未经授权</td>
+<td>模型 key 不对，见上面「快速开始 1」</td>
+</tr>
+<tr>
+<td>中文变成乱码</td>
+<td>Windows 控制台代码页问题，用 <code>run.bat</code>（已带 <code>chcp 65001</code>），或手动 <code>chcp 65001</code></td>
+</tr>
+<tr>
+<td>回复很慢</td>
+<td>上游模型首字延迟通常 4–20s（推理型模型先"想"再吐字）；见上面「嫌回复慢？先量再调」，换 <code>-cheap</code> 后缀最立竿见影</td>
+</tr>
+<tr>
+<td>想看她说了什么</td>
+<td>日志里 <code>[私聊] → …</code> / <code>[群聊] → …</code> 是完整回复内容</td>
+</tr>
+<tr>
+<td>记忆错乱</td>
+<td><code>/重置</code> 清掉当前会话；或直接删 <code>data/fishbot.db</code> 重新开始</td>
+</tr>
+<tr>
+<td>自主活动一次都没动</td>
+<td>她默认很克制：<code>quiet_hours</code> 睡觉、<code>min_idle_minutes</code> 内刚聊过就不打扰、<code>follow_up_after_hours</code> 内上句没人接就不回访。发 <code>/玩</code> 立刻验证一次，<code>/状态</code> 最后一行会写"想玩但忍住了"的原因</td>
+</tr>
+<tr>
+<td>她主动私聊了不该找的人</td>
+<td><code>autonomy.proactive_private_allow</code> 只留你自己的号，<strong>留空表示绝不主动找人</strong>；<code>actions</code> 里去掉 <code>chat</code> 可以彻底关掉</td>
+</tr>
+<tr>
+<td>她说「图里什么都看不见」</td>
+<td>看 <code>vision.enabled</code> 是不是关了；模型若是 <code>deepseek-v4-pro*</code> 那系本来就不看图；再看 <code>data/vision/</code> 有没有把图取回来（没落图＝取图那步就失败了）</td>
+</tr>
+<tr>
+<td>突然全线断线，3001 没了</td>
+<td><strong>小号被腾讯踢下线</strong>（旧注入方式还可能碰上 QQ 升级）。重跑 <code>boot_napcat.bat</code> 即可恢复；看门狗每 30 分钟也会自己修</td>
+</tr>
+<tr>
+<td>NapCat 窗口一闪就没了</td>
+<td>先确认没有残留 QQ 进程（<code>taskkill /f /im QQ.exe</code>）；再看 <code>&lt;NapCat 目录&gt;\shell\logs\</code> 里最新的日志（按时间倒序）</td>
+</tr>
+<tr>
+<td>想改 NapCat 的网络/端口</td>
+<td>改 <code>&lt;NapCat 目录&gt;\shell\config\onebot11_&lt;QQ号&gt;.json</code>，<strong>必须重启 NapCat</strong> 才生效；WebUI <a href="http://127.0.0.1:6099">http://127.0.0.1:6099</a> 也能改</td>
+</tr>
+<tr>
+<td>微信那边没动静</td>
+<td>先看 <code>data/wx_bridge.log</code>；桥接活着但收不到，多半是微信自己掉线了（微信窗口停在登录页）——手动登一下即可</td>
+</tr>
+<tr>
+<td>她在微信里说得像在 QQ</td>
+<td>平台名是按会话目标推的（数字 → QQ，其余 → 微信）。只在目标编号异常时才会认错</td>
+</tr>
+<tr>
+<td>想彻底关掉微信通道</td>
+<td><code>config.yaml</code> 里 <code>wechat.enabled: false</code>，再 <code>/重载</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>已知限制</h2>
+<ul>
+<li>图片会真的看（<code>vision</code>），但只描述、不做精细活：认字、数数偶尔出错；语音仍是占位提示</li>
+<li>群里的「接不接话」靠启发式判断（问句、带着「你 / 她」），偶尔会误判：要么接得勤，要么漏接</li>
+<li>微信侧只支持<strong>文本</strong>往回收（语音只发 QQ）</li>
+<li>模型服务 <code>127.0.0.1:8792</code> 是本机回环，<strong>换到别的机器上要另配一个公网可用的模型 API</strong></li>
+<li>微信通道依赖 <code>wechatauto</code> 对微信界面的定位，<strong>微信小版本更新后可能需要重新校准</strong></li>
+<li>没有 Web 管理后台，管理靠命令与配置文件</li>
+<li>单进程设计，没做多实例共享记忆</li>
+<li>主模型被限流、或只思考不吐正文时：先从思考里回收一次 → 再沿 <code>llm.fallback_models</code> 换人 → 整条链路都不行她才回一句兜底话</li>
+<li>借来的本事只认 <code>skills.allow</code> 里写过的名字；没写的 skill 她完全不知道</li>
+</ul>
+<hr />
+<h2>致谢与许可</h2>
+<ul>
+<li><strong>角色原型</strong>：「你这吃白饭的蓝色大肥鱼」是 DeepSeek 鲸鱼娘的社区二创形象，<br />
+  本项目的蓝色虎鲸娘、女仆装、耳侧小鱼鳍、偷吃 token 等设定参考了<br />
+<a href="https://github.com/YunYueSama/codex-deepseek-pet">YunYueSama/codex-deepseek-pet</a><br />
+  （作者 <strong>YunYueSama</strong>，许可证为"大肥鱼项目署名许可 1.0"，再分发请保留此署名与仓库地址）。</li>
+<li>接入协议：<a href="https://github.com/botuniverse/onebot-11">OneBot v11</a>，连接实现参考 <a href="https://github.com/NapNeko/NapCatQQ">NapCat</a>。</li>
+<li>本项目代码以 MIT 许可发布，随便改，改完记得喂她一口 token。</li>
+</ul>
+</body>
+</html>
