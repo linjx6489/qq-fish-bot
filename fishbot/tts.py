@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import os
 import random
@@ -18,6 +19,8 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 log = logging.getLogger("fishbot.tts")
 
@@ -78,6 +81,33 @@ def shift_pitch(value: str, delta: float) -> str:
         return value
     base = float(m.group(2)) * (-1 if m.group(1) == "-" else 1)
     return f"{int(round(base + delta)):+d}Hz"
+
+
+def _free_phys_mb() -> float:
+    """可用物理内存（MB）。读不到就返回 -1，当作「不知道」，不挡路。"""
+    try:
+        import ctypes
+
+        class _MemStatus(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        st = _MemStatus()
+        st.dwLength = ctypes.sizeof(_MemStatus)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+            return -1.0
+        return float(st.ullAvailPhys) / (1024.0 * 1024.0)
+    except Exception:  # noqa: BLE001
+        return -1.0
 
 
 class TTSError(RuntimeError):
@@ -294,7 +324,16 @@ class TTS:
                 raise TTSError(f"建不了音频目录：{exc}") from exc
 
             engine = (self.cfg.engine or "edge").lower()
-            order = ["edge", "sapi"] if engine in ("auto", "") else [engine]
+            if engine in ("auto", ""):
+                order = ["edge", "sapi"]
+            elif engine == "clone":
+                # 克隆优先；服务没起或超时就退回 edge，不能整条哑掉
+                order = ["clone", "edge"] if getattr(self.cfg, "clone_fallback", True) else ["clone"]
+            elif engine in ("rvc", "convert"):
+                # 音色转换：先用 edge 合成干净连贯的中文，再交给 RVC 把音色换成她的
+                order = ["rvc", "edge"] if getattr(self.cfg, "rvc_fallback", True) else ["rvc"]
+            else:
+                order = [engine]
             errors: list[str] = []
             for name in order:
                 try:
@@ -302,6 +341,16 @@ class TTS:
                         path = await self._synth_edge_long(speech, mood=mood, limit=limit)
                     elif name == "sapi":
                         path = await self._synth_sapi(speech)
+                    elif name == "clone":
+                        cap = int(getattr(self.cfg, "clone_max_chars", 60) or 0)
+                        if cap and len(speech) > cap:
+                            raise TTSError(f"这句话 {len(speech)} 字，超过克隆上限 {cap} 字")
+                        path = await self._synth_clone(speech)
+                    elif name == "rvc":
+                        cap = int(getattr(self.cfg, "rvc_max_chars", 80) or 0)
+                        if cap and len(speech) > cap:
+                            raise TTSError(f"这句话 {len(speech)} 字，超过音色转换上限 {cap} 字")
+                        path = await self._synth_rvc(speech, mood=mood, limit=limit)
                     else:
                         raise TTSError(f"不认识的引擎 {name}")
                 except Exception as exc:  # noqa: BLE001
@@ -319,7 +368,230 @@ class TTS:
             self.last_error = "；".join(errors) or "没有可用的语音引擎"
             raise TTSError(self.last_error)
 
-    async def _synth_edge_long(self, speech: str, *, mood: str, limit: int) -> Path:
+    async def _synth_clone(self, speech: str) -> Path:
+        """走本机 XTTS 克隆服务：中文文本 + 参考音 → 那条参考音的音色。"""
+        url = str(getattr(self.cfg, "clone_url", "") or "").strip().rstrip("/")
+        if not url:
+            raise TTSError("clone 引擎没配 clone_url")
+        payload = json.dumps(
+            {"text": speech, "speed": float(getattr(self.cfg, "clone_speed", 1.0) or 1.0)},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        timeout = float(getattr(self.cfg, "clone_timeout", 180.0) or 180.0)
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            resp = await client.post(
+                f"{url}/say",
+                content=payload,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+            )
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {}
+        if resp.status_code != 200 or not data.get("ok"):
+            raise TTSError(f"克隆服务返回 {resp.status_code}：{data.get('error') or resp.text[:120]}")
+        src = Path(str(data.get("wav") or ""))
+        if not src or not src.exists():
+            raise TTSError(f"克隆服务没给出音频：{data}")
+        dest = self._new_path(".wav")
+        try:
+            shutil.copyfile(src, dest)
+        except OSError:
+            return src          # 复制不动就直接用原路径，别浪费这一次合成
+        log.debug("克隆合成：%s → %s（%.1fs）", src.name, dest.name, float(data.get("synth_seconds") or 0))
+        return dest
+
+    async def _synth_rvc(self, speech: str, *, mood: str = "normal", limit: int = 220) -> Path:
+        """先让 edge 说一条干净连贯的中文，再送去 RVC 换成她的音色（内容与语气不变）。
+
+        为什么不直接用克隆式 TTS：那种做法自带的声码器电子味重、断句也硬。
+        转换式只换音色、保留源语音的节奏，听起来自然得多。
+
+        这台机器只有 5.85GB 内存，引擎常驻会把内存吃光（2026-10-22 13:51 那次
+        全系统崩机就是它，Resource-Exhaustion-Detector 记到 python 占了 6.6GB 虚拟内存），
+        所以改成「按需启动 + 用完自动关」：
+          · 可用内存低于 rvc_min_free_mb 就不用引擎，这一条直接退回 edge；
+          · 引擎没在跑（连不上）就自己把 start_voice_engine.bat 拉起来，等它就绪再转；
+          · 转完记时间，闲 rvc_idle_seconds 秒就 POST /shutdown，把内存还回去。
+        """
+        url = str(getattr(self.cfg, "rvc_url", "") or "").strip().rstrip("/")
+        if not url:
+            raise TTSError("rvc 引擎没配 rvc_url")
+        floor = float(getattr(self.cfg, "rvc_min_free_mb", 500) or 0)
+        free = _free_phys_mb()
+        if floor and 0 <= free < floor:
+            raise TTSError(f"可用内存只剩 {free:.0f}MB，这一条先用 edge 说")
+        base = await self._synth_edge_long(speech, mood=mood, limit=limit)
+        data = await self._rvc_convert(url, base)
+        if data is None:  # 引擎没在跑：拉起来再试一次
+            if not await self._rvc_boot(url):
+                raise TTSError(f"音色引擎起不来（{url}），这一条先用 edge 说")
+            data = await self._rvc_convert(url, base)
+        if data is None:
+            raise TTSError("音色引擎刚起来又没响应")
+        out = Path(str(data.get("out") or ""))
+        if not out.is_file():
+            raise TTSError(f"转换后的文件不见了：{out}")
+        self._rvc_last = time.time()
+        self._rvc_arm_idle(url)
+        return out
+
+    async def _rvc_convert(self, url: str, base: Path) -> dict | None:
+        """POST /convert；引擎没在跑（连不上）返回 None，其它错误抛 TTSError。"""
+        timeout = float(getattr(self.cfg, "rvc_timeout", 300.0) or 300.0)
+
+        def _num(key: str, default: float) -> float:
+            try:
+                return float(getattr(self.cfg, key, default) or default)
+            except (TypeError, ValueError):
+                return default
+
+        payload: dict[str, Any] = {
+            "audio": str(base),
+            "pitch": int(_num("rvc_pitch", 0.0)),
+            "protect": _num("rvc_protect", 0.5),
+            "filter_radius": int(_num("rvc_filter_radius", 5)),
+            "rms_mix": _num("rvc_rms_mix", 0.15),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+                resp = await client.post(f"{url}/convert", json=payload)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+            return None
+        except Exception as exc:  # noqa: BLE001
+            raise TTSError(f"音色转换服务没连上（{url}／{type(exc).__name__}）") from exc
+        if resp.status_code != 200:
+            raise TTSError(f"音色转换失败（HTTP {resp.status_code}）")
+        try:
+            data = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            raise TTSError("音色转换服务返回的不是 JSON") from exc
+        if not data.get("ok"):
+            raise TTSError(str(data.get("error") or "音色转换失败"))
+        return data
+
+    async def _rvc_ready(self, url: str) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
+                resp = await client.get(f"{url}/health")
+            return resp.status_code == 200
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _spawn_engine(self, flags: int) -> bool:
+        """直接用引擎自己的解释器把 rvc_server 拉起来。
+
+        不走 bat 里的 `start`：DETACHED_PROCESS 下 cmd 没有控制台，`start` 会静默失败
+        （2026-10-22 实测等 240 秒一个进程都没起来，而手动跑同一个 bat 就正常）。
+        """
+        eng = Path(str(getattr(self.cfg, "rvc_engine_dir", "") or ""))
+        if not eng.is_dir():
+            return False
+        py = eng / ".venv" / "Scripts" / "python.exe"
+        srv = eng / "rvc_server.py"
+        if not py.is_file() or not srv.is_file():
+            log.debug("引擎目录不全：%s", eng)
+            return False
+        threads = int(getattr(self.cfg, "rvc_threads", 2) or 2)
+        try:
+            port = int(str(getattr(self.cfg, "rvc_url", "")).rstrip("/").rsplit(":", 1)[-1])
+        except Exception:  # noqa: BLE001
+            port = 8799
+        (eng / "_tmp").mkdir(parents=True, exist_ok=True)
+        (eng / "logs").mkdir(parents=True, exist_ok=True)
+        env = os.environ.copy()
+        for key in ("http_proxy", "https_proxy", "all_proxy", "no_proxy",
+                    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
+            env.pop(key, None)
+        env.update({
+            "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1",
+            "TORCH_HOME": str(eng / "hf" / "torch"), "HF_HOME": str(eng / "hf"),
+            "OMP_NUM_THREADS": str(threads), "MKL_NUM_THREADS": str(threads),
+            "OMP_WAIT_POLICY": "PASSIVE",
+            "TMP": str(eng / "_tmp"), "TEMP": str(eng / "_tmp"),
+        })
+        args = [str(py), "-W", "ignore", "-u", str(srv), "--port", str(port), "--threads", str(threads)]
+        model = str(getattr(self.cfg, "rvc_model", "") or "")
+        if model:
+            args += ["--model", model]
+        pitch = float(getattr(self.cfg, "rvc_pitch", 0.0) or 0.0)
+        if pitch:
+            args += ["--pitch", str(pitch)]
+        try:
+            handle = open(eng / "logs" / "rvc_server.log", "ab")
+            try:
+                subprocess.Popen(
+                    args, cwd=str(eng), env=env, creationflags=flags,
+                    stdin=subprocess.DEVNULL, stdout=handle, stderr=subprocess.STDOUT,
+                )
+            finally:
+                handle.close()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("直接拉引擎失败：%s", exc)
+            return False
+
+    async def _rvc_boot(self, url: str) -> bool:
+        """引擎没在跑就拉起来；脱离父进程，别跟着机器人一起被关掉。"""
+        wait = float(getattr(self.cfg, "rvc_boot_timeout", 150.0) or 150.0)
+        root = Path(getattr(self, "root", None) or Path(__file__).resolve().parent.parent)
+        bat = root / "start_voice_engine.bat"
+        if not bat.is_file():
+            log.warning("没有 start_voice_engine.bat，起不了音色引擎")
+            return False
+        flags = 0
+        for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP"):
+            flags |= int(getattr(subprocess, name, 0) or 0)
+        started = self._spawn_engine(flags)
+        if not started:
+            # 退路：老办法（boot_all.bat / watchdog 那条路也还在用它）
+            try:
+                subprocess.Popen(
+                    ["cmd", "/c", str(bat)],
+                    cwd=str(root),
+                    creationflags=flags,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                started = True
+            except Exception as exc:  # noqa: BLE001
+                log.warning("拉不起音色引擎：%s", exc)
+                return False
+        log.info("音色引擎没在跑，已经拉起来了（要加载模型 + 预热，冷启动大约一分钟）……")
+        deadline = time.time() + max(30.0, wait)
+        while time.time() < deadline:
+            if await self._rvc_ready(url):
+                log.info("音色引擎就绪（等了 %.0f 秒）", max(0.0, wait - (deadline - time.time())))
+                return True
+            await asyncio.sleep(4.0)
+        log.warning("等了 %.0f 秒音色引擎还没就绪", wait)
+        return False
+
+    def _rvc_arm_idle(self, url: str) -> None:
+        task = getattr(self, "_rvc_idle", None)
+        if task is None or task.done():
+            self._rvc_idle = asyncio.create_task(self._rvc_idle_watch(url))
+
+    async def _rvc_idle_watch(self, url: str) -> None:
+        """闲着就把引擎关掉 —— 它一个进程能吃掉 1.4GB，这机器经不起常驻。"""
+        idle = float(getattr(self.cfg, "rvc_idle_seconds", 180.0) or 0)
+        if idle <= 0:
+            return
+        step = 20.0 if idle > 60 else max(5.0, idle / 2)
+        while True:
+            await asyncio.sleep(step)
+            last = float(getattr(self, "_rvc_last", 0.0) or 0.0)
+            if time.time() - last < idle:
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
+                    await client.post(f"{url}/shutdown")
+                log.info("音色引擎闲了 %.0f 秒，先关掉把内存还回去", idle)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("关引擎没成功：%s", exc)
+            return
+
+    async def _synth_edge_long(self, speech: str, *, mood: str = "normal", limit: int = 220) -> Path:
         """长句也尽量只做一条语音：分段合成，再用 ffmpeg 拼回去。
 
         以前超过 max_chars 就直接退回文字，结果她一会儿说一会儿打字；

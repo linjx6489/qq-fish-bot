@@ -12,4 +12,8 @@ set HTTPS_PROXY=
 set ALL_PROXY=
 set NO_PROXY=
 cd /d "%~dp0"
-".venv\Scripts\python.exe" -m fishbot >> fishbot.log 2>&1
+rem start /min gives python its own console: if some other console gets a
+rem CTRL_C/close event, it no longer takes the bot down with it
+rem (note: the redirection must live INSIDE the inner cmd, otherwise the
+rem  child console swallows it and fishbot.log stays empty)
+start "fishbot" /min cmd /c "".venv\Scripts\python.exe" -m fishbot 1>>fishbot.log 2>&1"

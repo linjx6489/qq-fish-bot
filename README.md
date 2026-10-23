@@ -33,7 +33,7 @@ llm:
 
 | 要改的地方 | 在哪 |
 | --- | --- |
-| NapCat 目录、机器人小号 QQ | `boot_all.bat` / `boot_qq.bat` / `start_qq_bot.bat` 顶部的 `NAPCAT_DIR`、`BOT_UIN` |
+| NapCat 目录、机器人小号 QQ | `boot_all.bat` / `boot_napcat.bat` 顶部，以及 `start_napcat_wmi.ps1` 里的 `$napDir`、`$uin` |
 | 管理员 QQ（能用 `/闭嘴` `/重载`） | `config.yaml` 的 `admin.users` |
 | 看门狗报备给谁发消息 | `watchdog.py` 顶部的 `OWNER_QQ` |
 
@@ -58,7 +58,7 @@ llm:
 | **会发表情包** | 按情绪挑图，句子后面跟 `[[表情:开心]]`，偶尔还会自己补一张，见下文 |
 | **借来的本事** | 会用本地 skill 里的思路（恋爱军师、造人术…），但只借思路、用自己的话说，见下文 |
 | **能自己动手** | 会截图、报机器状况、把旧对话压成摘要腾地方，见下文 |
-| **常开自愈** | 看门狗每 12 小时体检一次，掉了自动拉起来并 QQ 报备，见下文 |
+| **常开自愈** | 看门狗每 30 分钟体检一次，掉了自动拉起来并 QQ 报备，见下文 |
 | 本地控制台模式 | `--simulate` 不接 QQ 也能聊天调人设 |
 | 断线自愈 | 正向 WS 断了按指数退避重连；发送失败不会让进程崩掉；进程级心跳文件 |
 
@@ -94,7 +94,8 @@ qq-fish-bot/
 │   ├── mock_onebot.py  假 QQ 端（正向 WS 服务端）
 │   └── test_e2e.py     端到端测试（20 项，全绿）
 ├── boot_all.bat        一键全启：QQ + NapCat + 机器人 + 微信桥接
-├── boot_qq.bat         只拉 QQ/NapCat 那一段（看门狗修 QQ 时用）
+├── boot_napcat.bat     只拉 NapCat 那一段（看门狗修 QQ 通道时用）
+├── start_napcat_wmi.ps1  用 WMI 以「无控制台」方式派生 NapCat，关掉窗口不会带走它
 ├── run_bot.bat         只拉机器人（看门狗修机器人时用，自动清干净代理变量）
 ├── stop_bot.bat        暂停按钮：停机器人 + 暂停看门狗
 ├── config.yaml         实际配置（已填好模型与本机 key）
@@ -173,7 +174,7 @@ python -m fishbot --simulate
 
 它会依次：杀掉旧 QQ → 用 NapCat 拉起 QQ 并快速登录小号 → 等 3001 端口（最多约 75 秒）
 → 启动 fishbot（含微信桥接）。日志写在 `data\boot.log`。
-只想要 QQ 那一段（看门狗修 QQ 时用的就是它）就双击 `boot_qq.bat`。
+只想要 NapCat 那一段（看门狗修 QQ 通道时用的就是它）就双击 `boot_napcat.bat`。
 
 **手动启动（等价于上面三步）**
 
@@ -218,7 +219,7 @@ cd /d <仓库目录>
 
 #### 换成别的账号 / 换机器
 
-1. 把 `BOT_UIN` 改成目标 QQ 号（`boot_all.bat` 与 `boot_qq.bat` 顶部各有一处）
+1. 把机器人小号换成目标 QQ 号（`boot_all.bat`、`boot_napcat.bat` 顶部，以及 `start_napcat_wmi.ps1` 里的 `$uin`）
 2. 第一次登录新号通常要扫码：NapCat 窗口里会出二维码，用手机 QQ 扫
 3. 扫完 `config\onebot11_<QQ号>.json` 会自动生成，把上面的 `websocketServers` 段照抄进去再重启
 
@@ -843,15 +844,25 @@ powercfg /change disk-timeout-ac 0
 C:\Users\<你>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\qq-fish-bot.bat
 ```
 
-内容只有一行 —— 最小化调起 `boot_all.bat`。登录桌面后自动全启（QQ + NapCat + 机器人 + 微信桥接）。
+内容只有一行 —— 最小化调起 `boot_all.bat`。登录桌面后自动全启（独立版 NapCat + 机器人）。
 
-**第三层：看门狗**（`watchdog.py`，计划任务每 12 小时跑一次）
+> 2026-10-23 起，NapCat 用的是**独立版**（`<NapCat 目录>\shell_node`）——
+> 它自带一份 QQ 运行时（`node.exe` + `wrapper.node` + `QQNT.dll`），
+> 所以既不需要开你自己的 QQ，也不会去杀 `QQ.exe`。
+
+**第三层：看门狗**（`watchdog.py`，计划任务每 30 分钟跑一次）
 
 | 检查项 | 判据 | 坏了怎么修 |
 | --- | --- | --- |
-| QQ 通道 | `127.0.0.1:3001` 在监听 | 跑 `boot_qq.bat`：杀 QQ → NapCat 重新注入拉起 → 等端口 |
+| QQ 通道 | `127.0.0.1:3001` 在监听 | 跑 `boot_napcat.bat`：拉起独立版 NapCat（不碰你的 QQ）→ 等端口 |
 | 微信通道 | 有 `Weixin.exe` 进程 | 拉起 `C:\Program Files\Tencent\Weixin\Weixin.exe` |
 | 机器人本体 | `data/heartbeat` 文件比 300 秒新 | 跑 `run_bot.bat`：`.venv\Scripts\python.exe -m fishbot` |
+
+> **旧注入方式为什么废了**：以前是 `NapCatWinBootMain.exe` 把钩子注进
+> `C:\Program Files\Tencent\QQNT\QQ.exe`，2026-10-23 起 QQ 主进程注入后立刻退出，
+> OneBot 的 3001 再也不回来（还会把你的主号踢到登录界面）。独立版没有这个毛病。
+> 代价：小号的登录票据还是要有的。票据失效时（腾讯风控会把本地票据清掉）
+> 打开 <http://127.0.0.1:6099/webui/> 用手机 QQ 扫一次码即可，之后 `-q` 快速登录又能用了。
 
 > **为什么修复要绕一道 WMI**：计划任务跑完会把 job object 里的整棵进程树带走，
 > 被任务直接拉起的机器人活不过几分钟（日志里连报错都没有，就那么没了）。
@@ -898,7 +909,7 @@ cd /d <仓库目录>
 | 自主活动一次都没动 | 她默认很克制：`quiet_hours` 睡觉、`min_idle_minutes` 内刚聊过就不打扰、`follow_up_after_hours` 内上句没人接就不回访。发 `/玩` 立刻验证一次，`/状态` 最后一行会写"想玩但忍住了"的原因 |
 | 她主动私聊了不该找的人 | `autonomy.proactive_private_allow` 只留你自己的号，**留空表示绝不主动找人**；`actions` 里去掉 `chat` 可以彻底关掉 |
 | 她说「图里什么都看不见」 | 看 `vision.enabled` 是不是关了；模型若是 `deepseek-v4-pro*` 那系本来就不看图；再看 `data/vision/` 有没有把图取回来（没落图＝取图那步就失败了） |
-| 突然全线断线，3001 没了 | **QQ 自动升级**，或**被腾讯踢下线**。重跑 `boot_qq.bat` 即可恢复；看门狗也会自己修 |
+| 突然全线断线，3001 没了 | **小号被腾讯踢下线**（旧注入方式还可能碰上 QQ 升级）。重跑 `boot_napcat.bat` 即可恢复；看门狗每 30 分钟也会自己修 |
 | NapCat 窗口一闪就没了 | 先确认没有残留 QQ 进程（`taskkill /f /im QQ.exe`）；再看 `<NapCat 目录>\shell\logs\` 里最新的日志（按时间倒序） |
 | 想改 NapCat 的网络/端口 | 改 `<NapCat 目录>\shell\config\onebot11_<QQ号>.json`，**必须重启 NapCat** 才生效；WebUI <http://127.0.0.1:6099> 也能改 |
 | 微信那边没动静 | 先看 `data/wx_bridge.log`；桥接活着但收不到，多半是微信自己掉线了（微信窗口停在登录页）——手动登一下即可 |

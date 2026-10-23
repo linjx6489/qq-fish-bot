@@ -32,6 +32,12 @@ _DROPPED_IMAGE_RE = re.compile(
 # 兜底的视觉模型：配置里 vision.model 留空时用它
 DEFAULT_MODEL = "deepseek-v4.1-flash-free"
 
+# 从思考里捞回来的东西如果是在复述要求（而不是真的描述了图），一律当没有正文看待
+_PROMPT_ECHO_RE = re.compile(
+    r"主要是什么东西|有没有文字|照抄关键|大概什么颜色|什么情绪|不要分点|不超过\s*\d+\s*字"
+    r"|只输出|客观描述|用中文|别客套|需要.{0,6}(描述|识别|说明|回答)"
+)
+
 DEFAULT_PROMPT = (
     "看这几张图，用两三句中文说清里面有什么：主要是什么东西、有没有文字（有就照抄关键那句）、"
     "大概什么颜色、什么情绪。只说你真看到的，看不清就说不确定，不许客套、不许交代你在做什么。"
@@ -347,7 +353,10 @@ class Vision:
                 reason = str(msg.get("reasoning_content") or "").strip()
                 if not text and reason:
                     text = self._salvage(reason)
-                    if text:
+                    if text and _PROMPT_ECHO_RE.search(text):
+                        log.warning("识图：%s 捞回来的是要求本身，换下一个（%r）", model, text[:60])
+                        text = ""
+                    elif text:
                         log.info("识图：%s 只给思考不给正文，从思考里捞了 %d 字", model, len(text))
                 if text and _DROPPED_IMAGE_RE.search(text):
                     # 200 也可能是「图被上游静默丢了」，它会客客气气说自己没看到图

@@ -178,7 +178,28 @@ class TTSConfig:
     """
 
     enabled: bool = True
-    engine: str = "edge"  # edge=联网神经网络音色 | sapi=系统离线语音 | auto=先 edge 后 sapi
+    engine: str = "edge"  # edge=联网神经网络音色 | sapi=系统离线语音 | auto=先 edge 后 sapi | clone=本机音色克隆
+    clone_url: str = "http://127.0.0.1:8799"  # XTTS 音色克隆服务地址（engine=clone 时用）
+    clone_timeout: float = 180.0  # 克隆合成一次最多等多久（CPU 上慢，别设太小）
+    clone_speed: float = 1.0  # 传给克隆服务的语速
+    clone_fallback: bool = True  # 克隆服务挂了就退回 edge，不让整条回复哑掉
+    clone_max_chars: int = 60  # 超过这个字数的句子不克隆（CPU 上太慢），交给 edge
+    rvc_url: str = "http://127.0.0.1:8799"  # 音色转换服务（engine=rvc 时用）
+    rvc_pitch: float = 0.0  # 半音，把音高顶到目标（0 = 不动）
+    rvc_timeout: float = 300.0  # 转换一次最多等多久（CPU 上慢）
+    # 表现力旋钮（2026-10-22 按用户的 A/B 反馈加的，值由听感定）
+    rvc_protect: float = 0.5
+    rvc_filter_radius: int = 5
+    rvc_rms_mix: float = 0.15
+    # 这台机器内存小：引擎按需启动、闲时关掉，内存不够就不用
+    rvc_idle_seconds: float = 180.0
+    rvc_boot_timeout: float = 150.0
+    rvc_min_free_mb: int = 500
+    rvc_fallback: bool = True  # 转换服务挂了就退回纯 edge，不让整条回复哑掉
+    rvc_max_chars: int = 80  # 超过这个字数就不转换（CPU 上太慢），交给 edge
+    rvc_engine_dir: str = ""  # 音色引擎目录（里面要有 .venv 与 rvc_server.py）
+    rvc_model: str = ""  # RVC 模型 .pth（留空用引擎默认）
+    rvc_threads: int = 2  # 引擎 torch 线程数；这台机器内存小，别开大
     voice: str = "zh-CN-XiaoyiNeural"  # edge 音色（甜、年轻；方言名会被守卫换掉）
     sapi_voice: str = "Microsoft Huihui Desktop"  # sapi 兜底音色
     rate: str = "-14%"  # 基础语速（慢一点才像在聊天，快了就是播报腔）

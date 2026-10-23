@@ -38,6 +38,18 @@ WEIXIN_EXE = Path(r"C:\Program Files\Tencent\Weixin\Weixin.exe")
 BOOT_QQ_BAT = ROOT / "boot_qq.bat"
 RUN_BOT_BAT = ROOT / "run_bot.bat"
 BOT_PY = ROOT / ".venv" / "Scripts" / "python.exe"
+START_ENGINE_BAT = ROOT / "start_voice_engine.bat"
+
+# ---- 独立版 NapCat（2026-10-23 起）：自带 QQ 运行时，不再注入用户的 QQ 客户端 ----
+# 背景：旧方案（NapCatWinBootMain 注入 C:\Program Files\Tencent\QQNT\QQ.exe）自
+# 2026-10-23 起失效：注入后 QQ 主进程立刻退出，OneBot 的 3001 再也起不来。
+# 现在跑的是 NapCat.Shell.Windows.Node 那个自带 node.exe + QQNT.dll 的包。
+NAPCAT_DIR = Path(r"<NapCat 目录>\shell_node")
+NAPCAT_NODE = NAPCAT_DIR / "node.exe"
+NAPCAT_INDEX = NAPCAT_DIR / "index.js"
+NAPCAT_LOG = DATA / "napcat.log"
+BOT_UIN = "123456789"  # 机器人小号（快速登录用）
+VOICE_ENGINE_PORT = 8799  # 音色克隆服务（engine: clone 时才探它）
 
 ONEBOT_PORT = 3001
 OWNER_QQ = "987654321"  # 主人，报备用
@@ -159,11 +171,41 @@ def _wmi_create(command_line: str, cwd: Path | None = None) -> bool:
     return True
 
 
+def _kill_stale_napcat() -> None:
+    """收掉旧的独立版 NapCat 进程。
+
+    只按命令行里的 shell_node 精确匹配，不能用 taskkill /im node.exe：
+    这台机器上还有别的 node（比如 DSH 自己的 billion-context 代理）。
+    """
+    script = (
+        "$ErrorActionPreference='SilentlyContinue'; "
+        "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | "
+        "Where-Object { $_.CommandLine -like '*shell_node*' } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("清理旧 NapCat 失败：%s", exc)
+
+
 def fix_qq() -> bool:
-    """杀掉旧 QQ，重新用 NapCat 拉起小号，等 3001 回来。"""
-    log.info("修复 QQ 通道：跑 boot_qq.bat（WMI 派生）")
-    if not _wmi_create(f'cmd.exe /c "{BOOT_QQ_BAT}"', ROOT):
-        log.error("boot_qq.bat 没派出去")
+    """拉起独立版 NapCat（自带 QQ 运行时），等 OneBot 的 3001 回来。"""
+    log.info("修复 QQ 通道：拉起独立版 NapCat（-q %s）", BOT_UIN)
+    if not NAPCAT_INDEX.exists():
+        log.error("找不到独立版 NapCat：%s", NAPCAT_INDEX)
+        return False
+    _kill_stale_napcat()
+    time.sleep(2)
+    if not _wmi_create(
+        f'cmd.exe /c cd /d "{NAPCAT_DIR}" && "{NAPCAT_NODE}" "{NAPCAT_INDEX}" '
+        f'-q {BOT_UIN} > "{NAPCAT_LOG}" 2>&1',
+        NAPCAT_DIR,
+    ):
+        log.error("NapCat 没派出去（WMI 被拒）")
     for _ in range(30):
         if listening(ONEBOT_PORT):
             return True
@@ -198,6 +240,15 @@ def fix_bot() -> bool:
 
 
 # ---------------------------------------------------------------- 报备
+def fix_engine() -> bool:
+    """把音色克隆服务拉起来。它挂了不致命（TTS 会自动退回 edge），但音色就没了。"""
+    if not START_ENGINE_BAT.exists():
+        log.error("找不到 start_voice_engine.bat：%s", START_ENGINE_BAT)
+        return False
+    log.info("修复音色克隆服务：WMI 派生 start_voice_engine.bat")
+    return _wmi_create(f'cmd.exe /c "{START_ENGINE_BAT}"', ROOT)
+
+
 def notify(text: str) -> None:
     """通过 OneBot 给主人发一条私聊；失败就只记日志。"""
     try:
@@ -251,6 +302,20 @@ def wechat_enabled() -> bool:
     return bool(section.get("enabled", True))
 
 
+def engine_wanted() -> bool:
+    """配置里 tts.engine == clone 时，看门狗才去管那个克隆服务。"""
+    try:
+        import yaml
+
+        raw = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return False
+    section = raw.get("tts")
+    if not isinstance(section, dict):
+        return False
+    return str(section.get("engine", "")).strip().lower() in ("clone", "rvc", "convert")
+
+
 def check_once(dry_run: bool = False, do_notify: bool = True) -> dict:
     state = load_state()
     report: dict[str, object] = {}
@@ -271,6 +336,12 @@ def check_once(dry_run: bool = False, do_notify: bool = True) -> dict:
     report["wechat_procs"] = wx_procs
     report["wechat_enabled"] = wx_on
 
+    # 2.5) 音色克隆服务（只在自己开着的时候才要求它在）
+    eng_on = engine_wanted()
+    eng_ok = listening(VOICE_ENGINE_PORT) if eng_on else True
+    report["voice_engine"] = eng_ok
+    report["voice_engine_enabled"] = eng_on
+
     # 3) 机器人（心跳）
     age = heartbeat_age()
     bot_ok = age is not None and age < HEARTBEAT_STALE
@@ -278,12 +349,13 @@ def check_once(dry_run: bool = False, do_notify: bool = True) -> dict:
     report["heartbeat_age"] = None if age is None else round(age)
 
     log.info(
-        "体检 QQ=%s 微信=%s(%d 进程) 机器人=%s(心跳 %s)",
+        "体检 QQ=%s 微信=%s(%d 进程) 引擎=%s 机器人=%s(心跳 %s)",
         "ok" if qq_ok else "★断",
         "关" if not wx_on else ("ok" if wx_ok else "★断"), wx_procs,
+        "关" if not eng_on else ("ok" if eng_ok else "★断"),
         "ok" if bot_ok else "★断", "无" if age is None else f"{age:.0f}s",
     )
-    if qq_ok and wx_ok and bot_ok:
+    if qq_ok and wx_ok and eng_ok and bot_ok:
         save_state(state)
         report["actions"] = actions
         return report
@@ -314,6 +386,12 @@ def check_once(dry_run: bool = False, do_notify: bool = True) -> dict:
         actions.append(f"启动微信：{'成功' if ok else '失败'}")
         note_repair(state)
         report["wechat"] = ok
+
+    if eng_on and not eng_ok:
+        ok = fix_engine()
+        actions.append(f"拉起音色克隆服务：{'已拉起' if ok else '失败'}")
+        note_repair(state)
+        report["voice_engine"] = ok
 
     if not bot_ok:
         ok = fix_bot()

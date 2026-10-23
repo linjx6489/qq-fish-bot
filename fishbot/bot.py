@@ -796,6 +796,10 @@ class FishBot:
         if result is None or not result.ok:
             return "本鱼想压一下，没压成。"
         summary = sanitize_output(_tidy_summary(result.text or ""), 400).strip()
+        if summary and _SUMMARY_ECHO_RE.search(summary):
+            # 捞出来的其实是模型在复述要求 —— 这种文本一旦进记忆，她后面每轮都在跟着它跑偏
+            log.warning("压缩摘要里全是要求本身，丢掉不用：%r", summary[:90])
+            summary = ""
         if not summary:
             return "本鱼压出来是一片空白，那还是别压了。"
 
@@ -1405,9 +1409,30 @@ _SUMMARY_META_HINTS = (
     "每句内容",
     "几乎相同",
     "内容几乎",
+    # 2026-10-22 现场：
+    "不能有额外",
+    "需要把之前",
+    "要压缩到",
+    "非常关键",
+    "需要识别",
+    "我们需要",
+    "需要生成",
+    "必须只做",
+    "不扮演角色",
+    "不加戏",
+    "需要分析",
+    "保留：",
+    "不超过150",
+    "不超过 150",
 )
 
 _SUMMARY_LABELS = ("摘要：", "摘要:", "摘要如下：", "总结：", "总结:")
+
+# 摘要里出现这些，说明模型是在复述我的要求而不是在总结对话 —— 直接作废
+_SUMMARY_ECHO_RE = re.compile(
+    r"我们需要|需要识别|需要把之前|需要生成|需要分析|必须只做|不扮演角色|不加戏|不要分点"
+    r"|不能有额外|非常关键|要压缩到|不超过\s*\d+\s*字|第三人称.*摘要"
+)
 
 
 def _tidy_summary(text: str, limit: int = 220) -> str:
