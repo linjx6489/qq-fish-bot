@@ -138,10 +138,10 @@ tts:
   rvc_boot_timeout: 240       # 引擎按需启动时最多等多少秒
   rvc_min_free_mb: 250        # 可用内存低于这个数就不用引擎，直接 edge
   rvc_max_chars: 80                 # 超过这个字数不转换
-  rvc_engine_dir: D:\03_DSH\deepseek-harness\default-workspace\_voice_engine   # 引擎目录（里面要有 .venv 与 rvc_server.py）
-  rvc_model: D:\03_DSH\deepseek-harness\default-workspace\_voice_engine\rvc\anon\Anon RVC\Anon_v2.pth   # RVC 模型（Anon_v2.pth）
+  rvc_engine_dir: <音色转换引擎目录>   # 引擎目录（里面要有 .venv 与 rvc_server.py；不用 rvc 就不管它）
+  rvc_model: <音色转换引擎目录>\rvc\<模型名>.pth   # RVC 模型文件；不用 rvc 就不管它
   rvc_threads: 2                   # 引擎 torch 线程数；内存小，别开大
-  clone_fallback: true  # 发语音时是否再补一份文字（默认不补，只发语音）
+  clone_fallback: true         # 音色转换失败就退回纯 edge 的声音
   dir: data/voice              # 音频临时目录
   keep_files: 60               # 只保留最近这么多条音频
   timeout: 30                  # 单次合成超时（秒）

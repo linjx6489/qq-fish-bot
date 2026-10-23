@@ -206,7 +206,12 @@ class Autonomy:
     async def _act_signature(self) -> str | None:
         info = await self.bot.transport.call("get_login_info")
         nickname = str(info.get("nickname") or self.bot.persona.cfg.name)
-        text = await self._ask("写一句你现在的 QQ 个性签名，符合你的性格和此刻心情。", max_chars=24)
+        text = await self._ask(
+            "写一句你现在的 QQ 个性签名，符合你的性格和此刻心情。"
+            "别写跟白饭、吃饭、白吃白喝有关的内容（那是名字里的梗，天天念就不好笑了），"
+            "写点别的：此刻的心情、看到的事情、想做的事、困了想睡都行。",
+            max_chars=24,
+        )
         if not text:
             return None
         # nickname 是必填字段，必须带上，否则昵称会被清空
@@ -227,7 +232,8 @@ class Autonomy:
         today = await self.bot.mem.usage_summary(since=_day_start())
         tokens = int(today.get("total_tokens") or 0)
         text = await self._ask(
-            f"你今天已经偷吃了 {tokens} 个 token。写一句只有你自己看的心情记录。",
+            f"你今天已经偷吃了 {tokens} 个 token。写一句只有你自己看的心情记录。"
+            "别写白饭、吃饭这类梗，写点真的：今天遇到的事、谁让你高兴或无语、你在琢磨什么。",
             max_chars=60,
         )
         if not text:
