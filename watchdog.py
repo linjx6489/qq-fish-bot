@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""吃白饭的肥鱼 · 看门狗
+"""鲸鲸 · 看门狗
 
 每 12 小时被计划任务唤醒一次，检查三条线：
 
@@ -446,7 +446,7 @@ def stop_everything(keep_task: bool = False) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="吃白饭的肥鱼 · 看门狗")
+    ap = argparse.ArgumentParser(description="鲸鲸 · 看门狗")
     ap.add_argument("--loop", type=float, default=0, help="常驻循环，间隔秒数")
     ap.add_argument("--dry-run", action="store_true", help="只看不动手")
     ap.add_argument("--no-notify", action="store_true", help="不要发 QQ 报备")

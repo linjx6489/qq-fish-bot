@@ -48,8 +48,8 @@ llm:
   retries: 0
 
 persona:
-  name: 吃白饭的肥鱼
-  aliases: [肥鱼, 大肥鱼, 吃白饭的肥鱼, 鱼鱼]
+  name: 鲸鲸
+  aliases: [肥鱼, 大肥鱼, 鲸鲸, 鱼鱼]
   prompt_file: {prompt_file}
   max_chars: 90
   hard_max_chars: 400
@@ -130,7 +130,7 @@ def write_config(tmp: Path, llm: MockOpenAI, ob: MockOneBot) -> Path:
         CONFIG_TEMPLATE.format(
             base_url=llm.base_url,
             ws_url=ob.url,
-            prompt_file=str(ROOT / "personas" / "feiyu.md"),
+            prompt_file=str(ROOT / "personas" / "jingjing.md"),
             db_path=str(tmp / "fishbot.db"),
             admin_id=ADMIN_ID,
         ),
@@ -173,7 +173,7 @@ def tail(path: Path, limit: int = 2500) -> str:
 async def main() -> int:
     report = Report()
     print("=" * 62)
-    print(" 吃白饭的肥鱼 · 端到端测试")
+    print(" 鲸鲸 · 端到端测试")
     print(f" python: {sys.executable}")
     print(f" 项目根: {ROOT}")
     print("=" * 62)
@@ -276,7 +276,7 @@ async def main() -> int:
         await ob.inject(private_event("模型挂掉的时候你会说什么", user_id=USER_ID, message_id=106))
         got = await ob.collect(mark, 1, timeout=20)
         err_txt = flat(got, "send_private_msg")
-        report.check("⑨ 上游 500 时发卖萌兜底句而不是崩溃", "本鱼" in err_txt, err_txt[:60])
+        report.check("⑨ 上游 500 时发卖萌兜底句而不是崩溃", "本鲸" in err_txt, err_txt[:60])
 
         # ⑩ 静音权限
         mark = ob.mark()

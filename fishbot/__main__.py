@@ -16,8 +16,8 @@ from .router import TransportRouter
 from .wechat import WeChatTransport
 
 BANNER = r"""
-   ∧___∧      吃白饭的肥鱼 · QQ 自动回复机器人
-  (  ·ω· )    "本鱼只是路过，顺便偷一口 token。"
+   ∧___∧      鲸鲸 · QQ 自动回复机器人
+  (  ·ω· )    "本鲸只是路过，顺便偷一口 token。"
    \  ~  /     version {ver}
 """
 
@@ -125,7 +125,7 @@ async def amain(args: argparse.Namespace) -> int:
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
-        print("\n本鱼下班了，嗝~")
+        print("\n本鲸下班了。")
         await bot.close()
     return 0
 
@@ -144,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         pass
 
     parser = argparse.ArgumentParser(
-        prog="fishbot", description="吃白饭的肥鱼 · QQ 自动回复机器人"
+        prog="fishbot", description="鲸鲸 · QQ 自动回复机器人"
     )
     parser.add_argument("--config", "-c", default=None, help="配置文件路径（默认 ./config.yaml）")
     parser.add_argument("--simulate", "-s", action="store_true", help="本地控制台模式，不连接 QQ")

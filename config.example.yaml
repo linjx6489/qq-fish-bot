@@ -1,5 +1,5 @@
 ﻿# ============================================================
-#  吃白饭的肥鱼 · QQ 机器人配置
+#  鲸鲸 · QQ 机器人配置
 #  复制为 config.yaml 后修改；所有项均可用环境变量覆盖（见 README）
 # ============================================================
 
@@ -22,9 +22,9 @@ llm:
       thinking: false
 # ---------- 人设 ----------
 persona:
-  name: 吃白饭的肥鱼
-  aliases: [肥鱼, 大肥鱼, 吃白饭的肥鱼, 鱼鱼, 小鱼, 肥鱼鱼]
-  prompt_file: personas/feiyu.md   # 人设正文，改这个文件就能改性格
+  name: 鲸鲸
+  aliases: [鲸鲸, 小鲸, 鲸鲸鱼, 鲸宝, 鲸鱼]
+  prompt_file: personas/jingjing.md   # 人设正文，改这个文件就能改性格
   max_chars: 90                    # 单次回复期望长度（软约束）
   hard_max_chars: 400              # 超过则截断
   allow_emoji: true
@@ -108,7 +108,7 @@ autonomy:
 #   3) 真正的可选项只有 XiaoxiaoNeural（温柔，偏播报）与 XiaoyiNeural（活泼、年轻、偏高）。
 # 现在用 XiaoyiNeural 压音高：够甜，又不至于像播音员。
 tts:
-  enabled: true
+  enabled: false
   engine: edge                # edge=普通合成（默认：快、不吃内存）/ rvc=换成她的音色（要先起 _voice_engine\rvc_server.py，很吃内存）/ sapi=系统语音
   voice: zh-CN-XiaoyiNeural  # 甜、年轻；方言名会被代码里的守卫换掉
   sapi_voice: Microsoft Huihui Desktop

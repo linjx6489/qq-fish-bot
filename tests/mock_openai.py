@@ -12,11 +12,11 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-SHORT_REPLY = "咕噜~本鱼听见了：{snippet}"
+SHORT_REPLY = "咕噜~本鲸听见了：{snippet}"
 LONG_REPLY = (
     "第一句先拿来量一量长度，看看切分灵不灵。"
     "第二句继续拉长内容，让分句逻辑真的生效。"
-    "第三句还没说完呢，别急着催本鱼。"
+    "第三句还没说完呢，别急着催本鲸。"
     "第四句总该差不多了吧，再长就不礼貌了。"
 )
 

@@ -57,9 +57,11 @@ class LLMConfig:
 
 @dataclass
 class PersonaConfig:
-    name: str = "吃白饭的肥鱼"
-    aliases: list = field(default_factory=lambda: ["肥鱼", "大肥鱼", "吃白饭的肥鱼"])
-    prompt_file: str = "personas/feiyu.md"
+    name: str = "鲸鲸"
+    aliases: list = field(
+        default_factory=lambda: ["鲸鲸", "小鲸", "鲸鲸鱼", "鲸宝", "鲸鱼"]
+    )
+    prompt_file: str = "personas/jingjing.md"
     max_chars: int = 90
     hard_max_chars: int = 400
     allow_emoji: bool = True

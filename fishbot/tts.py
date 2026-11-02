@@ -299,6 +299,8 @@ class TTS:
         return want
 
     def status_text(self) -> str:
+        if not self.cfg.enabled:
+            return "语音：已关闭（config.yaml 里 tts.enabled: false，她只打字）"
         engine = (self.cfg.engine or "edge").lower()
         tone = "活泼" if getattr(self.cfg, "lively", True) else "平铺"
         return (

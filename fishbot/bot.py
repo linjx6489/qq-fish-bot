@@ -443,37 +443,37 @@ class FishBot:
     async def _cmd_help(self, **_) -> str:
         prefix = self.cfg.admin.command_prefix
         return (
-            f"本鱼会用的咒语（{prefix}开头）：\n"
+            f"本鲸会用的咒语（{prefix}开头）：\n"
             f"{prefix}重置 —— 吃掉这段记忆\n"
-            f"{prefix}token —— 看看本鱼偷吃了多少 token\n"
+            f"{prefix}token —— 看看本鲸偷吃了多少 token\n"
             f"{prefix}人设 —— 我是谁\n"
-            f"{prefix}状态 —— 本鱼还活着吗\n"
-            f"{prefix}喂 —— 给本鱼一口 token\n"
-            f"{prefix}玩 —— 让本鱼自己去玩一会儿 QQ\n"
-            f"{prefix}语音 —— 让本鱼用说的（{prefix}语音 说 你好呀）\n"
-            f"{prefix}搜 关键词 —— 让本鱼上网查一下\n"
-            f"{prefix}看 网址 —— 让本鱼读一下这个网页\n"
-            f"{prefix}截图 —— 让本鱼看一眼屏幕\n"
-            f"{prefix}系统 —— 让本鱼报一下这台机器的情况\n"
+            f"{prefix}状态 —— 本鲸还活着吗\n"
+            f"{prefix}喂 —— 给本鲸一口 token\n"
+            f"{prefix}玩 —— 让本鲸自己去玩一会儿 QQ\n"
+            f"{prefix}语音 —— 让本鲸用说的（{prefix}语音 说 你好呀）\n"
+            f"{prefix}搜 关键词 —— 让本鲸上网查一下\n"
+            f"{prefix}看 网址 —— 让本鲸读一下这个网页\n"
+            f"{prefix}截图 —— 让本鲸看一眼屏幕\n"
+            f"{prefix}系统 —— 让本鲸报一下这台机器的情况\n"
             f"{prefix}压缩 —— 把聊过的压成一小段，给自己省地方\n"
-            f"{prefix}技能 [名字] —— 看看本鱼手里借了几套本事\n"
-            f"{prefix}看图 —— 让本鱼说说你上一张图里有什么\n"
+            f"{prefix}技能 [名字] —— 看看本鲸手里借了几套本事\n"
+            f"{prefix}看图 —— 让本鲸说说你上一张图里有什么\n"
             f"{prefix}闭嘴 / {prefix}起床 —— 管理员开关本群回复"
         )
 
     async def _cmd_reset(self, *, session, msg_type, privileged, **_) -> str:
         if msg_type == "group" and not privileged:
-            return "只有群管理才能让本鱼失忆哦~"
+            return "只有群管理才能让本鲸失忆哦~"
         removed = await self.mem.clear(session)
         self._ambient.pop(session, None)
-        return f"咕噜…{removed} 条记忆已经被本鱼吃掉了，现在我们重新认识一下吧~"
+        return f"咕噜…{removed} 条记忆已经被本鲸吃掉了，现在我们重新认识一下吧~"
 
     async def _cmd_token(self, *, session, msg_type, **_) -> str:
         today = await self.mem.usage_summary(since=_day_start())
         total = await self.mem.usage_summary()
         here = await self.mem.usage_summary(session=session)
         return (
-            f"本鱼今天偷吃了 {today['total_tokens']} 个 token（{today['calls']} 口），"
+            f"本鲸今天偷吃了 {today['total_tokens']} 个 token（{today['calls']} 口），"
             f"这段关系里吃了 {here['total_tokens']} 个，"
             f"有生以来一共吞掉 {total['total_tokens']} 个。嗝~"
         )
@@ -485,7 +485,7 @@ class FishBot:
         up = int(time.time() - self._started_at)
         sessions = await self.mem.session_count()
         return (
-            f"本鱼还活着~ 已运行 {up // 3600}h{up % 3600 // 60}m\n"
+            f"本鲸还活着~ 已运行 {up // 3600}h{up % 3600 // 60}m\n"
             f"QQ 连接：{self.transport.status_text() if self.transport else '未接入'}\n"
             f"会话数：{sessions}｜事件 {self.counters['events']}｜回复 {self.counters['replies']}"
             f"｜跳过 {self.counters['skipped']}｜异常 {self.counters['errors']}\n"
@@ -501,7 +501,7 @@ class FishBot:
         """看看手里借了几套本事（/技能 名字 看细节）。"""
         if not self.skills.items:
             why = f"（{self.skills.last_error}）" if self.skills.last_error else ""
-            return f"本鱼手里没借到本事{why}。"
+            return f"本鲸手里没借到本事{why}。"
         want = (args or "").strip()
         if not want:
             lines = []
@@ -509,26 +509,26 @@ class FishBot:
                 desc = skill.description or ""
                 lines.append(f"· {skill.label}（{skill.key}）：{desc[:70]}{'…' if len(desc) > 70 else ''}")
             return (
-                "本鱼手里借了这些本事：\n"
+                "本鲸手里借了这些本事：\n"
                 + "\n".join(lines)
                 + f"\n想细看就说 {self.cfg.admin.command_prefix}技能 名字。"
             )
         hit = self.skills.items.get(want) or self.skills.pick(want)
         if hit is None:
-            return f"本鱼没借过「{want}」这套本事。"
+            return f"本鲸没借过「{want}」这套本事。"
         return f"{hit.label}：\n{self.skills.peek(hit.key, 600)}"
 
     async def _cmd_mute(self, *, session, privileged, **_) -> str:
         if not privileged:
-            return "你又不是群管理，凭什么让本鱼闭嘴！"
+            return "你又不是群管理，凭什么让本鲸闭嘴！"
         await self.mem.kv_set(f"muted:{session}", True)
-        return "唔…那本鱼先安静一会儿，饿了再出来。"
+        return "唔…那本鲸先安静一会儿，饿了再出来。"
 
     async def _cmd_unmute(self, *, session, privileged, **_) -> str:
         if not privileged:
-            return "本鱼醒了，但是不太想理你。"
+            return "本鲸醒了，但是不太想理你。"
         await self.mem.kv_set(f"muted:{session}", False)
-        return "本鱼回来啦！说吧，是不是有 token 要请我吃~"
+        return "本鲸回来啦！说吧，是不是有 token 要请我吃~"
 
     async def _cmd_reload(self, *, privileged, **_) -> str:
         if not privileged:
@@ -539,7 +539,7 @@ class FishBot:
 
     async def _cmd_voice(self, *, session, msg_type, target, user_id, args, privileged, **_) -> str:
         if msg_type == "group" and not privileged:
-            return "群里要管理员才能让本鱼开口说话~"
+            return "群里要管理员才能让本鲸开口说话~"
         if not self.tts.enabled:
             return "语音功能没打开（config.yaml 里 tts.enabled 是 false）。"
 
@@ -548,7 +548,7 @@ class FishBot:
         if head in ("说", "念", "say"):
             line = arg[len(head):].strip()
             if not line:
-                return "想让本鱼说什么？例如：/语音 说 咕噜噜~本鱼上线啦"
+                return "想让本鲸说什么？例如：/语音 说 你好呀~（语音现在是关着的）"
             ok = await self._send_voice(msg_type, target, line, user_id=user_id)
             if ok:
                 return f"念完了：{line}"
@@ -565,17 +565,17 @@ class FishBot:
             self._voice_sessions.add(session)
 
         if session in self._voice_sessions:
-            return f"好~接下来本鱼用说的。（{self.tts.status_text()}）"
-        return f"行，本鱼继续打字。（{self.tts.status_text()}）"
+            return f"好~接下来本鲸用说的。（{self.tts.status_text()}）"
+        return f"行，本鲸继续打字。（{self.tts.status_text()}）"
 
     async def _cmd_feed(self, *, session, user_id, **_) -> str:
         count = int(await self.mem.kv_get(f"fed:{user_id}", 0)) + 1
         await self.mem.kv_set(f"fed:{user_id}", count)
         lines = [
-            "吧唧吧唧…这个 token 好甜！",
-            "唔姆？你居然主动喂我，那本鱼就勉强收下了。",
+            "嗯嗯，这口 token 挺甜。",
+            "唔姆？你居然主动喂我，那本鲸就勉强收下了。",
             "（叼走）嘿嘿，下次还有吗~",
-            "吃饱啦，本鱼今天可以多回你两句。",
+            "吃饱啦，本鲸今天可以多回你两句。",
         ]
         return f"{random.choice(lines)}（已被投喂 {count} 次）"
 
@@ -583,32 +583,32 @@ class FishBot:
         if not privileged:
             return "这是管理员才有的咒语。"
         if not getattr(self.transport, "online", False):
-            return "本鱼现在没连上 QQ，玩不动~ 先看看 NapCat 起来没有。"
+            return "本鲸现在没连上 QQ，玩不动~ 先看看 NapCat 起来没有。"
         result = await self.autonomy.run_once(force=True, reason="manual")
         if result:
-            return f"本鱼刚刚自己玩了一下：{result}"
+            return f"本鲸刚刚自己玩了一下：{result}"
         cfg = self.autonomy.cfg
         if self.autonomy.pending_reason:
-            return f"本鱼刚才想玩，但忍住了：{self.autonomy.pending_reason}"
+            return f"本鲸刚才想玩，但忍住了：{self.autonomy.pending_reason}"
         if not [a for a in cfg.actions if self.autonomy._available(a)]:
-            return "本鱼翻了翻自己的玩具箱，发现没开任何可玩的项目~"
-        return "本鱼转了一圈，觉得没什么好玩的，什么都没干~"
+            return "本鲸翻了翻自己的玩具箱，发现没开任何可玩的项目~"
+        return "本鲸转了一圈，觉得没什么好玩的，什么都没干~"
 
     async def _cmd_search(self, *, args: str = "", privileged: bool = False, **_) -> str:
         """/搜 关键词 —— 上网查一下，然后用自己的话说出来。"""
         if not self.web.enabled:
-            return "管理员把本鱼的网线拔了（net.enabled: false）。"
+            return "管理员把本鲸的网线拔了（net.enabled: false）。"
         query = (args or "").strip()
         if not query:
-            return "想让本鱼查什么？写在后头，比如：/搜 今天有什么新闻"
+            return "想让本鲸查什么？写在后头，比如：/搜 今天有什么新闻"
         hits = await self.web.search(query)
         if not hits:
-            return f"本鱼扒了半天，什么都没搜到……（{self.web.last_error or '可能网断了'}）"
+            return f"本鲸扒了半天，什么都没搜到……（{self.web.last_error or '可能网断了'}）"
 
         context = self.web.render_hits(hits, query)
         ask = (
             f"{context}\n\n"
-            f"上面是本鱼刚在网上搜到的资料。请用你自己的身份、自己的口气，"
+            f"上面是本鲸刚在网上搜到的资料。请用你自己的身份、自己的口气，"
             f"把答案讲给对面听（别照抄、别念标题、别提「搜索结果」这几个字）。"
             f"如果资料答不上这个问题，就直说没查到。"
         )
@@ -623,28 +623,28 @@ class FishBot:
             log.warning("联网：搜索后总结失败 %s", exc)
             result = None
         if result is None or not result.ok or not (result.text or "").strip():
-            return f"本鱼搜到了，但一时不知道怎么说：\n{context}"
+            return f"本鲸搜到了，但一时不知道怎么说：\n{context}"
 
         answer = sanitize_output(result.text, self.cfg.persona.hard_max_chars)
         if self.cfg.net.show_sources and hits:
             sources = "、".join(h.url for h in hits[:2])
-            answer = f"{answer}\n（本鱼是从这些地方看来的：{sources}）"
+            answer = f"{answer}\n（本鲸是从这些地方看来的：{sources}）"
         return answer
 
     async def _cmd_look(self, *, args: str = "", privileged: bool = False, **_) -> str:
         """/看 网址 —— 读一个网页，然后用自己的话说出来。"""
         if not self.web.enabled:
-            return "管理员把本鱼的网线拔了（net.enabled: false）。"
+            return "管理员把本鲸的网线拔了（net.enabled: false）。"
         url = extract_url(args) or (args or "").strip().split()[0] if (args or "").strip() else ""
         if not url:
             return "想看哪个网页？把网址跟在后头，比如：/看 https://example.com"
         page = await self.web.fetch(url)
         if not page.get("ok"):
-            return f"这个网页本鱼没打开……（{page.get('error') or '未知原因'}）"
+            return f"这个网页本鲸没打开……（{page.get('error') or '未知原因'}）"
 
         ask = (
             f"{self.web.render_page(page)}\n\n"
-            f"上面是本鱼刚读到的网页内容。请用你自己的身份、自己的口气，"
+            f"上面是本鲸刚读到的网页内容。请用你自己的身份、自己的口气，"
             f"把里面的重点讲给对面听（两三句就够，别照抄）。"
         )
         try:
@@ -658,7 +658,7 @@ class FishBot:
             log.warning("联网：读网页后总结失败 %s", exc)
             result = None
         if result is None or not result.ok or not (result.text or "").strip():
-            return f"本鱼读到了，但不知道怎么说：\n{page.get('text', '')[:300]}"
+            return f"本鲸读到了，但不知道怎么说：\n{page.get('text', '')[:300]}"
         return sanitize_output(result.text, self.cfg.persona.hard_max_chars)
 
     # ================================================================ 干活
@@ -723,13 +723,13 @@ class FishBot:
     async def _cmd_shot(self, *, msg_type: str = "private", target: str = "", **_) -> str:
         """/截图 —— 看一眼屏幕，把图发出去。"""
         if not self.tools.allows("screenshot"):
-            return "管理员没让本鱼看屏幕（tools.screenshot: false）。"
+            return "管理员没让本鲸看屏幕（tools.screenshot: false）。"
         if not self._image_ok(target):
-            return "本鱼能截，但微信那边发不了图，得在 QQ 里喊我。"
+            return "本鲸能截，但微信那边发不了图，得在 QQ 里喊我。"
         try:
             path = self.tools.screenshot()
         except ToolError as exc:
-            return f"本鱼没截上……（{exc}）"
+            return f"本鲸没截上……（{exc}）"
         if not await self._send_image(msg_type, target, path):
             return "图截好了，但发不出去（通道这边不支持图片）。"
         return f"喏，屏幕现在长这样（{path.name}）。"
@@ -737,11 +737,11 @@ class FishBot:
     async def _cmd_sysinfo(self, **_) -> str:
         """/系统 —— 报一下这台机器的情况。"""
         if not self.tools.allows("sysinfo"):
-            return "管理员没让本鱼看机器（tools.sysinfo: false）。"
+            return "管理员没让本鲸看机器（tools.sysinfo: false）。"
         try:
             info = self.tools.machine()
         except ToolError as exc:
-            return f"本鱼看不了……（{exc}）"
+            return f"本鲸看不了……（{exc}）"
         return f"这台机器的情况：{info}"
 
     async def _cmd_compact(self, *, session: str = "", **_) -> str:
@@ -751,7 +751,7 @@ class FishBot:
     async def _compact_session(self, session: str, *, force: bool = False) -> str:
         """把老消息压成一段摘要，腾出上下文 —— 这就是"自己压缩上下文"。"""
         if not self.tools.allows("compact"):
-            return "管理员没让本鱼压缩记忆（tools.compact: false）。"
+            return "管理员没让本鲸压缩记忆（tools.compact: false）。"
         keep = max(1, int(self.cfg.tools.keep_recent or 6))
         raw = await self.mem.kv_get(f"compact:{session}", None)
         marker = raw if isinstance(raw, dict) else {}
@@ -791,17 +791,17 @@ class FishBot:
             self.tools.counters["failed"] += 1
             self.tools.last_error = f"{type(exc).__name__}: {exc}"
             log.warning("压缩上下文失败：%s", exc)
-            return "本鱼想压一下，结果脑子卡住了……待会儿再说。"
+            return "本鲸想压一下，结果脑子卡住了……待会儿再说。"
 
         if result is None or not result.ok:
-            return "本鱼想压一下，没压成。"
+            return "本鲸想压一下，没压成。"
         summary = sanitize_output(_tidy_summary(result.text or ""), 400).strip()
         if summary and _SUMMARY_ECHO_RE.search(summary):
             # 捞出来的其实是模型在复述要求 —— 这种文本一旦进记忆，她后面每轮都在跟着它跑偏
             log.warning("压缩摘要里全是要求本身，丢掉不用：%r", summary[:90])
             summary = ""
         if not summary:
-            return "本鱼压出来是一片空白，那还是别压了。"
+            return "本鲸压出来是一片空白，那还是别压了。"
 
         await self.mem.kv_set(
             f"compact:{session}",
@@ -994,22 +994,22 @@ class FishBot:
     async def _cmd_vision(self, *, session: str = "", args: str = "", **_) -> str:
         """她说「看看这张图」的时候用：看会话里最后一张图，或看一个图片网址。"""
         if not self.vision.enabled:
-            return "本鱼的眼睛被蒙上了（vision.enabled: false）。"
+            return "本鲸的眼睛被蒙上了（vision.enabled: false）。"
         want = (args or "").strip()
         if want and (is_image_url(want) or want.startswith(("http://", "https://"))):
             text = await self.vision.look_url(extract_url(want) or want, call=self._transport_call())
             if text:
-                return f"本鱼瞅了一眼：{text}"
-            return f"这个图本鱼没看成（{self.vision.last_error or '不知道为啥'}）。"
+                return f"本鲸瞅了一眼：{text}"
+            return f"这个图本鲸没看成（{self.vision.last_error or '不知道为啥'}）。"
         refs = self.vision.last_refs(session)
         if not refs:
-            return "本鱼手上没有你发的图，先发一张给我看看？"
+            return "本鲸手上没有你发的图，先发一张给我看看？"
         text = await self.vision.describe(
             refs, session=session, call=self._transport_call(), force=True
         )
         if text:
-            return f"本鱼看着呢：{text}"
-        return f"这张图本鱼没看成（{self.vision.last_error or '不知道为啥'}）。"
+            return f"本鲸看着呢：{text}"
+        return f"这张图本鲸没看成（{self.vision.last_error or '不知道为啥'}）。"
 
     async def _generate(
         self,
@@ -1287,9 +1287,9 @@ class FishBot:
     def _error_line() -> str:
         return random.choice(
             [
-                "唔…本鱼的脑子卡住了，等会儿再来找我吧。",
-                "咕噜噜…（模型没接上，本鱼现在说不出话）",
-                "本鱼今天吃撑了，脑袋转不动，稍后再聊~",
+                "唔…本鲸的脑子卡住了，等会儿再来找我吧。",
+                "咕噜噜…（模型没接上，本鲸现在说不出话）",
+                "本鲸今天吃撑了，脑袋转不动，稍后再聊~",
             ]
         )
 
@@ -1344,7 +1344,7 @@ _AUTO_SEARCH_HINTS = (
 
 # 她说话里这些词是称呼她/触发她，搜之前先摘掉，别拿去当关键词。
 _SEARCH_NOISE = (
-    "肥鱼", "大肥鱼", "吃白饭的肥鱼", "鱼鱼", "小鱼", "本鱼", "帮我", "帮忙",
+    "鲸鲸", "大鲸鲸", "吃白饭的鲸鲸", "鱼鱼", "小鱼", "本鲸", "帮我", "帮忙",
     "请问", "一下", "知不知道", "你知道吗", "我想知道", "我想问", "告诉我",
 )
 
@@ -1474,7 +1474,7 @@ def _tidy_summary(text: str, limit: int = 220) -> str:
 
 
 _ADDRESS_HINTS = (
-    "你", "妳", "您", "肥鱼", "本鱼", "在吗", "在不在", "帮我", "看看", "瞧瞧",
+    "你", "妳", "您", "鲸鲸", "本鲸", "在吗", "在不在", "帮我", "看看", "瞧瞧",
     "说说", "讲讲", "怎么办", "为什么", "啥", "吗", "呢", "能不能", "可不可以",
     "怎么样", "有没有", "哪个", "谁", "哪里", "多少钱",
 )

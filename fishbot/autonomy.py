@@ -1,4 +1,4 @@
-"""自主活动：让肥鱼自己折腾 QQ，而不是干等着别人说话。
+"""自主活动：让鲸鲸自己折腾 QQ，而不是干等着别人说话。
 
 设计原则：**会打扰别人的动作必须显式开白名单**，改签名、记心情这类
 自娱自乐的动作默认允许。所有结果都写进记忆库，下次聊天时她还能想起来。
@@ -222,7 +222,7 @@ class Autonomy:
         return f"把个性签名改成「{text}」"
 
     async def _act_nickname(self) -> str | None:
-        text = await self._ask("给自己换一个新昵称，还是「肥鱼」的味道但换个说法。", max_chars=12)
+        text = await self._ask("给自己换一个新昵称，还是「鲸鲸」的味道但换个说法。", max_chars=12)
         if not text:
             return None
         await self.bot.transport.call("set_qq_profile", {"nickname": text})

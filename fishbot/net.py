@@ -215,7 +215,7 @@ class Web:
             ("sogou", self._search_sogou),
         ]
         # 中文查询优先百度/搜狗：bing 对中文长查询常常只抓住第一个词
-        # （搜"蓝色大肥鱼 是什么梗"，bing 回的全是"蓝色是什么颜色"）
+        # （搜"蓝色大鲸鲸 是什么梗"，bing 回的全是"蓝色是什么颜色"）
         if _CJK_RUN_RE.search(query):
             prefer = {"baidu": 0, "sogou": 1, "bing-rss": 2, "bing-html": 3}
             backends.sort(key=lambda pair: prefer.get(pair[0], 9))

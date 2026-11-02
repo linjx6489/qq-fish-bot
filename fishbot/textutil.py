@@ -155,7 +155,7 @@ def clean_text(text: str) -> str:
 # --------------------------------------------------------------------------
 
 _FENCE = re.compile(r"```[a-zA-Z0-9_+-]*\n?")
-_LEADING_NAME = re.compile(r"^\s*(?:吃白饭的肥鱼|大肥鱼|肥鱼)\s*[:：]\s*")
+_LEADING_NAME = re.compile(r"^\s*(?:鲸鲸|小鲸|鲸鲸鱼|鲸宝|鲸鱼|大肥鱼|肥鱼)\s*[：:,，]?\s*")
 _MULTI_NEWLINE = re.compile(r"\n{3,}")
 _SPACES = re.compile(r"[ \t]{2,}")
 

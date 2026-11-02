@@ -60,6 +60,6 @@ def render(md_path: Path, title: str) -> None:
 
 
 if __name__ == "__main__":
-    render(ROOT / "README.md", "吃白饭的肥鱼 · QQ 自动回复机器人")
-    render(ROOT / "assets" / "character.md", "吃白饭的肥鱼 · 角色形象设定")
+    render(ROOT / "README.md", "鲸鲸 · QQ 自动回复机器人")
+    render(ROOT / "assets" / "character.md", "鲸鲸 · 角色形象设定")
     print("完成。双击 docs\\*.html 即可在浏览器打开。")

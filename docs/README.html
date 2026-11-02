@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>吃白饭的肥鱼 · QQ 自动回复机器人</title>
+<title>鲸鲸 · QQ 自动回复机器人</title>
 <style>
 body{font-family:"Microsoft YaHei",-apple-system,"Segoe UI",sans-serif;max-width:880px;margin:32px auto;padding:0 20px 60px;color:#24292f;line-height:1.75;background:#fff}
 h1{border-bottom:2px solid #4A7FD1;padding-bottom:8px;color:#1B3B6F}
@@ -23,10 +23,10 @@ img{max-width:100%}
 </style>
 </head>
 <body>
-<p>﻿# 吃白饭的肥鱼 · QQ / 微信 自动回复机器人</p>
+<p>﻿# 鲸鲸 · QQ 自动回复机器人</p>
 <p>一只<strong>会偷吃 token 的蓝色虎鲸娘</strong>，同时接进 QQ 和微信陪你聊天。</p>
-<p>她叫「吃白饭的肥鱼」——圆脸蓝瞳、蓝紫渐层长发、耳侧一对小鲸鱼鳍、深蓝色女仆装，<br />
-把 token 当脑力口粮，一边嘴上说着"本鱼只是路过"，一边把你的每句话都记进小账本。</p>
+<p>她叫「鲸鲸」——圆脸蓝瞳、蓝紫渐层长发、耳侧一对小鲸鱼鳍、深蓝色女仆装，<br />
+把 token 当脑力口粮，一边嘴上说着"本鲸只是路过"，一边把你的每句话都记进小账本。</p>
 <ul>
 <li>模型：<code>deepseek-v4.1-flash-free</code>，备选 <code>deepseek-v4.1-flash-1017</code>（OpenAI 兼容接口，默认指向本机 <code>http://127.0.0.1:8792/v1</code>）<br />
   —— 这个模型是老毛病：思考一大堆、正文常常是空的。代码里加了一层「思考回收」，会把话从思考里捞回来，见下文</li>
@@ -83,15 +83,15 @@ img{max-width:100%}
 <tbody>
 <tr>
 <td>私聊 / 群聊自动回复</td>
-<td>群里<strong>不用 @ 也接话</strong>（有人在问、在聊她时）；@ 她或叫她「肥鱼」则一定接</td>
+<td>群里<strong>不用 @ 也接话</strong>（有人在问、在聊她时）；@ 她或叫她「鲸鲸」则一定接</td>
 </tr>
 <tr>
 <td><strong>双通道</strong></td>
 <td>同一时刻在 QQ 和微信上都在线，各自独立记忆，策略共用</td>
 </tr>
 <tr>
-<td><strong>发语音</strong></td>
-<td>可以真的开口说话（edge-tts 合成 → NapCat 转 silk），见下文</td>
+<td>~~发语音~~</td>
+<td><strong>已关闭</strong>（<code>tts.enabled: false</code>）；想在本机开回来见下文</td>
 </tr>
 <tr>
 <td>随机插话</td>
@@ -175,7 +175,7 @@ img{max-width:100%}
 │   ├── persona.py      人设拼接（平台、状态、饥饿度、群聊环境、临时提醒）
 │   ├── textutil.py     CQ 码解析、输出清洗、emoji 过滤、分句、代理对清洗
 │   └── console.py      本地控制台调试通道
-├── personas/feiyu.md   人设正文 ← 想改性格就改这个文件
+├── personas/jingjing.md   人设正文 ← 想改性格就改这个文件
 ├── assets/character.md 角色形象设定 + 出图提示词
 ├── assets/stickers/    表情包素材 + manifest.json
 ├── watchdog.py         看门狗：体检 QQ / 微信 / 机器人，按需修复并报备
@@ -218,13 +218,13 @@ python -m pip install -r requirements.txt
 <h3>3. 先不接 QQ，试聊两句</h3>
 <pre><code class="language-powershell">python -m fishbot --simulate
 </code></pre>
-<pre><code>   ∧___∧      吃白饭的肥鱼 · QQ 自动回复机器人
-  (  ·ω· )    &quot;本鱼只是路过，顺便偷一口 token。&quot;
+<pre><code>   ∧___∧      鲸鲸 · QQ 自动回复机器人
+  (  ·ω· )    &quot;本鲸只是路过，顺便偷一口 token。&quot;
    \  ~  /     version 1.0.0
 
 本地控制台模式：直接输入消息和她聊天，输入 /quit 退出。
 
-肥鱼&gt; 你好呀~ 本鱼是一条蓝色虎鲸娘，住在聊天窗口里白吃白喝……
+鲸鲸&gt; 你好呀~ 我是鲸鲸，一条住在聊天窗口里的蓝色虎鲸娘。
 </code></pre>
 <h3>4. 接入 QQ（NapCat）</h3>
 <blockquote>
@@ -391,7 +391,7 @@ cd /d &lt;仓库目录&gt;
 </tr>
 <tr>
 <td><code>/玩</code></td>
-<td>让本鱼立刻自己去玩一次 QQ（不等定时）</td>
+<td>让本鲸立刻自己去玩一次 QQ（不等定时）</td>
 <td>管理员</td>
 </tr>
 <tr>
@@ -812,7 +812,7 @@ cd /d &lt;仓库目录&gt;
 <tr>
 <td><code>net.enabled</code></td>
 <td><code>true</code></td>
-<td>关掉＝拔网线，<code>/搜</code> 会回「管理员把本鱼的网线拔了」</td>
+<td>关掉＝拔网线，<code>/搜</code> 会回「管理员把本鲸的网线拔了」</td>
 </tr>
 <tr>
 <td><code>net.max_results</code></td>
@@ -847,13 +847,16 @@ cd /d &lt;仓库目录&gt;
 <tr>
 <td><code>net.show_sources</code></td>
 <td><code>true</code></td>
-<td>回答尾部附上「本鱼是从这些地方看来的」</td>
+<td>回答尾部附上「本鲸是从这些地方看来的」</td>
 </tr>
 </tbody>
 </table>
 <p>抓回来的正文和搜索摘要交给模型时，指令是<strong>用她自己的口气讲</strong>（别照抄、别念标题、别提"搜索结果"这几个字）；<br />
 模型调用失败就直接把原文摘回去，不会因为重写失败而哑掉。</p>
 <h2>表情包（<code>stickers</code>）</h2>
+<blockquote>
+<p>当前素材 <strong>50 张 / 283 个标签</strong>（从 107 张里按家族挑的，覆盖 31 类情绪；砍掉的挪在 <code>assets/stickers_unused/</code>，想换回来把文件挪回去再改 manifest 即可）。</p>
+</blockquote>
 <p>素材放 <code>assets/stickers/</code>，配一份 <code>manifest.json</code>：</p>
 <pre><code class="language-json">{&quot;happy&quot;: {&quot;file&quot;: &quot;happy.png&quot;, &quot;desc&quot;: &quot;笑得眯眼的蓝色虎鲸娘&quot;, &quot;keywords&quot;: [&quot;开心&quot;, &quot;高兴&quot;, &quot;得意&quot;], &quot;source&quot;: &quot;https://…&quot;}}
 </code></pre>
@@ -959,9 +962,9 @@ cd /d &lt;仓库目录&gt;
 <p>想立刻看她表演一次，管理员发 <code>/玩</code>。<code>/状态</code> 最后一行会显示自主活动的次数、<br />
 上次做了什么，以及"想玩但忍住了"的原因。</p>
 <p>一个真跑出来的例子（<code>/玩</code> 的输出）：</p>
-<pre><code>本鱼刚刚自己玩了一下：把个性签名改成「在线发呆中，有事敲一下 (´-ω-`)」
-本鱼刚刚自己玩了一下：记了条心情：今天认真回了三十多条消息，还挺有成就感的 (๑•̀ㅂ•́)و
-本鱼刚刚自己玩了一下：主动找 987654321 搭话：诶对了，那张图你还没告诉本鱼是啥呢~
+<pre><code>本鲸刚刚自己玩了一下：把个性签名改成「在线发呆中，有事敲一下 (´-ω-`)」
+本鲸刚刚自己玩了一下：记了条心情：今天认真回了三十多条消息，还挺有成就感的 (๑•̀ㅂ•́)و
+本鲸刚刚自己玩了一下：主动找 987654321 搭话：诶对了，那张图你还没告诉本鲸是啥呢~
 </code></pre>
 <hr />
 <h2>配置说明</h2>
@@ -1002,7 +1005,7 @@ cd /d &lt;仓库目录&gt;
 </tr>
 </tbody>
 </table>
-<p>| <code>persona.prompt_file</code> | <code>personas/feiyu.md</code> | 人设正文，改完发 <code>/重载</code> 立刻生效 |<br />
+<p>| <code>persona.prompt_file</code> | <code>personas/jingjing.md</code> | 人设正文，改完发 <code>/重载</code> 立刻生效 |<br />
 | <code>persona.max_chars</code> | <code>90</code> | 期望的回复长度（软约束，写进 system prompt） |<br />
 | <code>behavior.group_require_at</code> | <code>false</code> | 群里不用 @ 也能接话；设 <code>true</code> 退回「必须 @ 才回」 |<br />
 | <code>behavior.group_reply_probability</code> | <code>0.35</code> | 别人纯闲聊时的插话概率，嫌吵设 <code>0</code> |<br />
@@ -1127,7 +1130,7 @@ FISHBOT_LOG_LEVEL       日志级别
 </code></pre>
 <hr />
 <h2>改人设</h2>
-<p>打开 <code>personas/feiyu.md</code>，里面分几大块：</p>
+<p>打开 <code>personas/jingjing.md</code>，里面分几大块：</p>
 <ol>
 <li><strong>外观</strong> —— 耳侧的小鲸鱼鳍会随情绪抖动、围裙上印着白色小鲸鱼（只在她被问到长相时才描述）</li>
 <li><strong>性格</strong> —— 脑子清楚、逻辑顺（先结论后理由，事情按顺序讲，不来回跳）、活泛爱搭话、嘴硬心软、<br />
@@ -1148,7 +1151,7 @@ FISHBOT_LOG_LEVEL       日志级别
 <h2>token 账本</h2>
 <p>每次调用模型都会往 <code>usage_log</code> 表写一行（prompt / completion / total / 是否估算）。<br />
 <code>/token</code> 返回的就是它：</p>
-<pre><code>本鱼今天偷吃了 3394 个 token（3 口），这段关系里吃了 3394 个，有生以来一共吞掉 3394 个。嗝~
+<pre><code>本鲸今天偷吃了 3394 个 token（3 口），这段关系里吃了 3394 个，有生以来一共吞掉 3394 个。
 </code></pre>
 <p>流式响应里如果上游没返回 <code>usage</code>，会按字符数估算并标记 <code>estimated=1</code>，不会凭空丢账。</p>
 <hr />
@@ -1190,6 +1193,11 @@ QQ 端（正向 WS 服务端），再用子进程把机器人真跑起来，覆�
 </code></pre>
 <hr />
 <h2>让她开口说话（语音）</h2>
+<blockquote>
+<p><strong>现在是关着的</strong>：<code>config.yaml</code> 里 <code>tts.enabled: false</code>，她只打字，合成的临时音频也清空了。<br />
+下面这套东西仍然在仓库里，哪天想在本地开回来：把 <code>enabled</code> 改回 <code>true</code>、重启即可<br />
+（edge 引擎不需要额外装东西；<code>rvc</code> 那条路要自备音色模型和一份显存/内存预算）。</p>
+</blockquote>
 <p>她默认会自己开口：<strong>大约每三条回复里有一条是语音</strong>，其余还是打字。想固定下来就用命令。</p>
 <table>
 <thead>
@@ -1340,8 +1348,8 @@ QQ 端（正向 WS 服务端），再用子进程把机器人真跑起来，覆�
 <tbody>
 <tr>
 <td><code>enabled</code></td>
-<td>true</td>
-<td>语音总开关</td>
+<td>false</td>
+<td>语音总开关（当前关闭）</td>
 </tr>
 <tr>
 <td><code>engine</code></td>
