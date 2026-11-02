@@ -40,6 +40,7 @@ from .textutil import (
 from .tools import ToolBox, ToolError, parse_tool, split_partial_tool, tools_hint
 from .tts import TTS, TTSError
 from .vision import Vision, image_refs, is_image_url
+from .qqctl import QQControl, QQControlError, STATUS_CHOICES
 
 log = logging.getLogger("fishbot.bot")
 
@@ -67,6 +68,7 @@ class FishBot:
         self.stickers = Stickers(cfg.stickers, ROOT)
         self.tools = ToolBox(cfg.tools, ROOT)
         self.vision = Vision(cfg.vision, cfg.llm)
+        self.ctrl = QQControl(cfg.ctrl, ROOT)
         self.skills = Skills(cfg.skills, ROOT)
         self.transport: Any = None
         self._voice_sessions: set[str] = set()
@@ -96,9 +98,12 @@ class FishBot:
         log.info("%s", self.skills.status_text())
         log.info("%s", self.tts.status_text())
         log.info("%s", self.vision.status_text())
+        log.info("%s", self.ctrl.status_text())
         self.persona.load()
         if self.transport is not None:
             await self.transport.start()
+            self.ctrl.attach(self.transport)
+            await self.ctrl.start()
         ok, detail = await self.llm.health()
         log.info("模型服务：%s —— %s", "可用" if ok else "不可达", detail)
         await self.autonomy.start()
@@ -117,6 +122,7 @@ class FishBot:
             await self.transport.stop()
         await self.web.close()
         await self.vision.close()
+        await self.ctrl.close()
         await self.llm.close()
         await self.mem.close()
 
@@ -155,6 +161,8 @@ class FishBot:
         self.web.cfg = fresh.net
         self.cfg.vision = fresh.vision
         self.vision.cfg = fresh.vision
+        self.cfg.ctrl = fresh.ctrl
+        self.ctrl.cfg = fresh.ctrl
         self.vision.llm = fresh.llm
         self.stickers.cfg = fresh.stickers
         self.stickers.load(force=True)
@@ -421,6 +429,20 @@ class FishBot:
             "看图": self._cmd_vision,
             "识图": self._cmd_vision,
             "describe": self._cmd_vision,
+            "昵称": self._cmd_nickname,
+            "nickname": self._cmd_nickname,
+            "签名": self._cmd_sign,
+            "sign": self._cmd_sign,
+            "头像": self._cmd_avatar,
+            "avatar": self._cmd_avatar,
+            "在线": self._cmd_online,
+            "online": self._cmd_online,
+            "说说": self._cmd_qzone,
+            "空间": self._cmd_qzone,
+            "qzone": self._cmd_qzone,
+            "删说说": self._cmd_qzone_del,
+            "点赞": self._cmd_like,
+            "like": self._cmd_like,
         }
         handler = handlers.get(cmd)
         if handler is None:
@@ -435,6 +457,8 @@ class FishBot:
             nickname=nickname,
             args=args,
             privileged=privileged,
+            parsed=parsed,
+            ev=ev,
         )
         if reply:
             await self._send_text(msg_type, target, reply, ev=None, at_user=None)
@@ -458,8 +482,121 @@ class FishBot:
             f"{prefix}压缩 —— 把聊过的压成一小段，给自己省地方\n"
             f"{prefix}技能 [名字] —— 看看本鲸手里借了几套本事\n"
             f"{prefix}看图 —— 让本鲸说说你上一张图里有什么\n"
+            f"{prefix}昵称 名字 —— 让本鲸改自己的 QQ 昵称\n"
+            f"{prefix}签名 文字 —— 改本鲸的个性签名\n"
+            f"{prefix}头像 [图/网址] —— 换本鲸的头像\n"
+            f"{prefix}在线 状态 —— 在线 / 忙碌 / 隐身 / 离开 / 请勿打扰 / Q我吧\n"
+            f"{prefix}说说 [文字] —— 发一条 QQ 空间说说（可带图，加 --仅自己 就只自己可见）\n"
+            f"{prefix}删说说 tid —— 撤掉刚发的那条\n"
+            f"{prefix}点赞 QQ号 [次数] —— 给那个人点个赞\n"
             f"{prefix}闭嘴 / {prefix}起床 —— 管理员开关本群回复"
         )
+
+    # ------------------------------------------------------------ 操控 QQ
+    async def _cmd_nickname(self, *, args: str = "", privileged: bool = False, **_) -> str:
+        if not privileged:
+            return QQ_OWNER_ONLY
+        name = (args or "").strip()
+        if not name:
+            now = await self._qq_profile_safe()
+            return f"想改成什么名字？现在是「{now.get('nickname') or '（问不到）'}」。用法：/昵称 鲸鲸"
+        try:
+            got = await self.ctrl.set_nickname(name)
+        except QQControlError as exc:
+            return f"名字没改成：{exc}"
+        return f"改好了，现在叫「{got}」。"
+
+    async def _cmd_sign(self, *, args: str = "", privileged: bool = False, **_) -> str:
+        if not privileged:
+            return QQ_OWNER_ONLY
+        text = (args or "").strip()
+        if not text:
+            now = await self._qq_profile_safe()
+            return f"写点什么当签名？现在是「{now.get('longNick') or '（空的）'}」。用法：/签名 今天也想被投喂"
+        try:
+            got = await self.ctrl.set_signature(text)
+        except QQControlError as exc:
+            return f"签名没改成：{exc}"
+        return f"签名挂上了：「{got}」"
+
+    async def _cmd_avatar(self, *, args: str = "", privileged: bool = False, parsed=None, **_) -> str:
+        if not privileged:
+            return QQ_OWNER_ONLY
+        src = extract_url(args or "") or (args or "").strip()
+        if not src and parsed is not None:
+            got = await self.ctrl.image_sources_from_message(parsed, limit=1)
+            src = got[0] if got else ""
+        if not src:
+            return "给我张图我就换：发图时带上 /头像，或者 /头像 https://…（本机路径也行）"
+        try:
+            await self.ctrl.set_avatar(src)
+        except QQControlError as exc:
+            return f"头像没换成：{exc}"
+        return "换好了，去看看？"
+
+    async def _cmd_online(self, *, args: str = "", privileged: bool = False, **_) -> str:
+        if not privileged:
+            return QQ_OWNER_ONLY
+        want = (args or "").strip()
+        if not want:
+            return "想让我挂什么状态？能用：" + "、".join(STATUS_CHOICES)
+        try:
+            got = await self.ctrl.set_status(want)
+        except QQControlError as exc:
+            return f"状态没改成：{exc}"
+        return f"好，挂着「{got}」。"
+
+    async def _cmd_qzone(self, *, args: str = "", privileged: bool = False, parsed=None, **_) -> str:
+        if not privileged:
+            return QQ_OWNER_ONLY
+        body = (args or "").strip()
+        right = ""
+        hit = re.search(r"(?:--|——|—)(所有人|好友|部分好友|仅自己|部分好友不可见)\s*$", body)
+        if hit:
+            right = hit.group(1)
+            body = body[: hit.start()].strip()
+        images: list[str] = []
+        if parsed is not None:
+            images = await self.ctrl.image_sources_from_message(parsed, limit=9)
+        if not body and not images:
+            return "想说点什么？用法：/说说 今天天气不错（带图也行，或者加 --仅自己）"
+        try:
+            tid = await self.ctrl.post_qzone(body, images, right=right)
+        except QQControlError as exc:
+            return f"说说没发出去：{exc}"
+        tail = "，反悔就 /删说说 " + tid if tid else ""
+        return f"发出去了～（{right or self.cfg.ctrl.default_ugc_right} 可见{tail}）"
+
+    async def _cmd_qzone_del(self, *, args: str = "", privileged: bool = False, **_) -> str:
+        if not privileged:
+            return QQ_OWNER_ONLY
+        tid = (args or "").strip()
+        if not tid:
+            return "要撤哪条？把 tid 给我（发说说时会回一个）。"
+        try:
+            await self.ctrl.delete_qzone(tid)
+        except QQControlError as exc:
+            return f"没删掉：{exc}"
+        return f"撤了（{tid}）。"
+
+    async def _cmd_like(self, *, args: str = "", privileged: bool = False, **_) -> str:
+        if not privileged:
+            return QQ_OWNER_ONLY
+        bits = (args or "").split()
+        if not bits or not bits[0].isdigit():
+            return "给谁点赞？用法：/点赞 987654321 20"
+        times = int(bits[1]) if len(bits) > 1 and bits[1].isdigit() else 10
+        try:
+            got = await self.ctrl.like(bits[0], times)
+        except QQControlError as exc:
+            return f"赞没点上：{exc}"
+        return f"点完了：{got}。"
+
+    async def _qq_profile_safe(self) -> dict:
+        try:
+            return await self.ctrl.profile()
+        except QQControlError:
+            return {}
 
     async def _cmd_reset(self, *, session, msg_type, privileged, **_) -> str:
         if msg_type == "group" and not privileged:
@@ -495,6 +632,7 @@ class FishBot:
             f"{self.tools.status_text()}"
             f"\n{self.skills.status_text()}"
             f"\n{self.vision.status_text()}"
+            f"\n{self.ctrl.status_text()}"
         )
 
     async def _cmd_skills(self, *, args: str = "", **_) -> str:
@@ -1318,6 +1456,8 @@ def _is_silent(text: str) -> bool:
 
 # 这些是系统自带会话，名字里带「助手」也不是机器人，别误伤。
 # 微信的「文件传输助手」正是踩在这个坑上的。
+QQ_OWNER_ONLY = "这个只有主人能让我干（动的是我自己那个号）。"
+
 _SYSTEM_CHATS = (
     "文件传输助手", "微信团队", "微信支付", "微信运动",
     "订阅号消息", "服务通知", "折叠的群聊", "QQ团队", "QQ空间",

@@ -230,6 +230,16 @@ vision:
   prompt: ''                    # 留空用内置提示词
 
 # ---------- 管理 ----------
+
+# ---------- 操控 QQ ----------
+# 让她能改自己的昵称/签名/头像/在线状态、发 QQ 空间说说、给好友点赞。
+# 这些命令只有主人（admin.users 里的人）能让她执行。
+ctrl:
+  enabled: true               # 总开关
+  qzone_enabled: true         # 允许发空间说说
+  max_qzone_per_day: 5        # 每天最多发几条说说（0 = 不限）
+  default_ugc_right: 1        # 默认可见范围：1 所有人 / 4 好友 / 16 部分好友 / 64 仅自己 / 128 部分好友不可见
+  announce: true              # 干完活回报一句结果
 admin:
   users: []                    # 管理员 QQ 号，可执行 /闭嘴 /重载 /状态
   command_prefix: "/"

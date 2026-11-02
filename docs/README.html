@@ -142,6 +142,10 @@ img{max-width:100%}
 <td>会截图、报机器状况、把旧对话压成摘要腾地方，见下文</td>
 </tr>
 <tr>
+<td><strong>能操控 QQ</strong></td>
+<td>改自己的昵称 / 签名 / 头像 / 在线状态、发 QQ 空间说说、给别人点赞，见下文</td>
+</tr>
+<tr>
 <td><strong>常开自愈</strong></td>
 <td>看门狗每 30 分钟体检一次，掉了自动拉起来并 QQ 报备，见下文</td>
 </tr>
@@ -174,6 +178,9 @@ img{max-width:100%}
 │   ├── tts.py          语音合成（edge-tts 首选，SAPI 兜底）
 │   ├── persona.py      人设拼接（平台、状态、饥饿度、群聊环境、临时提醒）
 │   ├── textutil.py     CQ 码解析、输出清洗、emoji 过滤、分句、代理对清洗
+│   ├── vision.py       识图：取图（本地 / OneBot get_image / HTTPS）+ 问视觉模型
+│   ├── skills.py       借来的本事：读本地 skill，挑相关的塞进提示词
+│   ├── qqctl.py        操控 QQ：昵称 / 签名 / 头像 / 在线状态 / 说说 / 点赞
 │   └── console.py      本地控制台调试通道
 ├── personas/jingjing.md   人设正文 ← 想改性格就改这个文件
 ├── assets/character.md 角色形象设定 + 出图提示词
@@ -396,7 +403,7 @@ cd /d &lt;仓库目录&gt;
 </tr>
 <tr>
 <td><code>/语音</code></td>
-<td>切换语音回复：不带参数=开关，<code>说 &lt;内容&gt;</code>=念一句，<code>关</code>=闭嘴打字</td>
+<td>切换语音回复：不带参数=开关，<code>说 &lt;内容&gt;</code>=念一句，<code>关</code>=闭嘴打字（<strong>默认已关</strong>：<code>tts.enabled: false</code>）</td>
 <td>所有人</td>
 </tr>
 <tr>
@@ -439,10 +446,55 @@ cd /d &lt;仓库目录&gt;
 <td>看某一份本事的开头（比如 <code>/技能 goutoujunshi</code>）</td>
 <td>所有人</td>
 </tr>
+<tr>
+<td><code>/昵称 名字</code></td>
+<td>改她自己的 QQ 昵称</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/签名 [文字]</code></td>
+<td>改她的个性签名；不带文字=看现在写的是什么</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/头像 [图/网址]</code></td>
+<td>换她的 QQ 头像（不带参数=用你上一张图）</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/在线 &lt;状态&gt;</code></td>
+<td>切 QQ 在线状态：在线 / 忙碌 / 隐身 / 离开 / 请勿打扰 / Q我吧</td>
+<td>所有人</td>
+</tr>
+<tr>
+<td><code>/说说 [文字]</code></td>
+<td>发一条 QQ 空间说说（可带图；加 <code>--仅自己</code> 只自己可见）</td>
+<td>管理员</td>
+</tr>
+<tr>
+<td><code>/删说说 &lt;tid&gt;</code></td>
+<td>撤掉刚发的那条说说</td>
+<td>管理员</td>
+</tr>
+<tr>
+<td><code>/点赞 &lt;QQ号&gt; [次数]</code></td>
+<td>给那个人点赞，默认 1 次、最多 20 次</td>
+<td>管理员</td>
+</tr>
 </tbody>
 </table>
 <p>命令前缀可以在 <code>admin.command_prefix</code> 里改（比如换成 <code>.</code> 或 <code>#</code>）。<br />
 命令走的是独立通道：<strong>不进模型、不记历史、不消耗 token</strong>。</p>
+<hr />
+<h2>操控 QQ（<code>ctrl</code>）</h2>
+<p>她不只是会说话 —— 你可以直接使唤她的手：改自己的昵称 / 签名 / 头像 / 在线状态，发 QQ 空间说说，删说说，给别人点赞。</p>
+<ul>
+<li>在 QQ 里直接发命令就行：<strong>私聊、群里都不用 @</strong>（命令在策略过滤之前处理）。</li>
+<li>开关与限额在 <code>config.yaml</code> 的 <code>ctrl:</code> 段：<code>enabled</code>(总开关) / <code>qzone_enabled</code>(能不能动空间) / <code>max_qzone_per_day</code>(每天最多几条说说) / <code>default_ugc_right</code>(默认可见性，<code>64</code> = 仅自己可见) / <code>like_max</code>(单次点赞上限)。</li>
+<li>发出去的说说会记在 <code>data/qzone.json</code>，<code>/删说说 &lt;tid&gt;</code> 就是靠它撤的；<code>tid</code> 就是她回复里给你的那串。</li>
+<li>头像可以直接发张图再 <code>/头像</code>，也可以 <code>/头像 https://...</code> 给个网址。</li>
+<li><strong>风控提醒</strong>：刚登录不久的号，短时间内连改昵称 / 头像 / 在线状态容易被判定异常、被踢下线（2026-11-02 就这么掉过一次，重扫一次码才回来）。要改就一次改完，别反复折腾。</li>
+</ul>
 <hr />
 <h2>看见东西（<code>vision</code>）</h2>
 <p>别人发的图片，她是<strong>真的看得见</strong> —— 图里有什么、图上写了什么字，都能给你讲出来。</p>
