@@ -62,6 +62,7 @@ class QQControl:
         self.counters: dict[str, int] = {"ok": 0, "failed": 0, "qzone": 0, "avatar": 0}
         self.last_error = ""
         self.last_action = ""
+        self.last_tid = ""  # 最近一条说说的 tid（便于"撤了"）
         self._qzone_window: list[float] = []
 
     # ------------------------------------------------------------ 接线
@@ -226,6 +227,8 @@ class QQControl:
 
         data = await self.call("send_qzone_msg", payload, timeout=90.0)
         tid = str((data or {}).get("tid") or "") if isinstance(data, dict) else ""
+        if tid:
+            self.last_tid = tid
         self.counters["qzone"] += 1
         self._qzone_window.append(time.time())
         log.info("QQ 操控：发了一条说说（%s，%d 图，tid=%s）", UGC_LABELS.get(ugc, ugc), len(files), tid or "?")
@@ -304,6 +307,10 @@ class QQControl:
         if len(self._qzone_window) >= limit:
             return False, f"今天已经发了 {len(self._qzone_window)} 条说说，到上限了（{limit} 条/天）"
         return True, ""
+
+    def last_qzone_tid(self) -> str:
+        """最近发出去的那条说说（一句话"撤了"就能撤掉它）。"""
+        return self.last_tid
 
     def status_text(self) -> str:
         if not self.enabled:

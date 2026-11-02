@@ -297,6 +297,8 @@ class FishBot:
         # ---------- 命令 ----------
         if await self._handle_command(ev, parsed, session, msg_type, target, user_id, nickname, sender):
             return
+        if await self._maybe_natural(ev, parsed, session, msg_type, target, user_id, nickname, sender):
+            return
 
         # ---------- 策略过滤 ----------
         if not self._policy_allows(msg_type, target, user_id):
@@ -464,6 +466,111 @@ class FishBot:
             await self._send_text(msg_type, target, reply, ev=None, at_user=None)
         return True
 
+    # ---------------------------------------------------- 自然语言使唤 & 能力清单
+    def _addressed(self, parsed, msg_type: str, text: str) -> bool:
+        """群里得先叫到她（或被 @），私聊不用。"""
+        if msg_type == "private":
+            return True
+        if getattr(parsed, "at_self", False):
+            return True
+        return any(a and a in text for a in (self.cfg.persona.aliases or []))
+
+    def _ctrl_handlers(self) -> dict:
+        return {
+            "avatar": self._cmd_avatar,
+            "nickname": self._cmd_nickname,
+            "sign": self._cmd_sign,
+            "online": self._cmd_online,
+            "qzone": self._cmd_qzone,
+            "qzone_del": self._cmd_qzone_del,
+            "like": self._cmd_like,
+        }
+
+    def capabilities_text(self) -> str:
+        """她能干什么 —— 一问就答，而且跟当前真实状态一致。"""
+        n_sticker = 0
+        try:
+            if not (getattr(self.stickers, "items", None) or []):
+                self.stickers.load()
+            hit = re.search(r"(\d+)\s*张", str(self.stickers.status_text() or ""))
+            n_sticker = int(hit.group(1)) if hit else len(getattr(self.stickers, "items", []) or [])
+        except Exception:
+            n_sticker = 0
+        n_skill = 0
+        try:
+            n_skill = len(self.skills.names())  # type: ignore[attr-defined]
+        except Exception:
+            n_skill = 0
+        voice = "语音：关着" if not getattr(self.tts, "enabled", False) else "发语音"
+        return (
+            "我能干的：聊天接梗、看气氛 · 看图（你发的图我真看得见，图里有啥、写了啥都能讲）· "
+            "上网查、读网页 · 看屏幕、报机器状况 · 压记忆腾地方 · "
+            f"贴表情包（{n_sticker} 张）· 借来的本事（{n_skill} 套）· "
+            "操控我自己的 QQ（昵称 / 签名 / 头像 / 在线状态 / 发说说 / 删说说 / 点赞）· " + voice + "。\n"
+            "要动手的活儿直接跟我说，不用背命令：比如「换个头像」「把签名改成今天也想被投喂」"
+            "「发条说说：今天天气不错」「给 987654321 点个赞」。"
+        )
+
+    async def _maybe_natural(self, ev, parsed, session, msg_type, target, user_id, nickname, sender) -> bool:
+        """不写斜杠也能使唤她：把自然语言翻成动作。"""
+        text = (parsed.plain or "").strip()
+        if not text or text.startswith(self.cfg.admin.command_prefix):
+            return False
+        got = _natural_intent(text)
+        if not got:
+            return False
+        action, args = got
+        if not self._addressed(parsed, msg_type, text):
+            return False
+        if action != "caps" and not getattr(self.ctrl, "enabled", False):
+            return False
+        privileged = self._is_privileged(user_id, sender)
+        if action == "caps":
+            reply = self.capabilities_text()
+        elif not privileged:
+            reply = "这个得主人开口我才动，别人说我可不听。"
+        else:
+            handler = self._ctrl_handlers().get(action)
+            if handler is None:
+                return False
+            log.info("自然语言使唤：%s %r", action, args)
+            reply = await handler(
+                session=session, msg_type=msg_type, target=target, user_id=user_id,
+                nickname=nickname, args=args, privileged=privileged, parsed=parsed, ev=ev,
+            )
+        if reply:
+            await self._send_text(msg_type, target, reply, ev=None, at_user=None)
+        return True
+
+    async def _run_ctrl_markers(self, text: str, *, parsed, user_id: str, sender: dict) -> str:
+        """她回复里的 [[操控:换头像]] 这类标记，由系统替她真做掉。"""
+        if not text or "[[" not in text:
+            return text
+        found = _CTRL_MARKER_RE.findall(text)
+        if not found:
+            return text
+        clean = _CTRL_MARKER_RE.sub("", text).strip()
+        if not self._is_privileged(user_id, sender):
+            return clean
+        for raw in found[:3]:
+            got = _natural_intent(raw)
+            if not got:
+                log.info("操控标记看不懂：%r", raw)
+                continue
+            action, args = got
+            handler = self._ctrl_handlers().get(action)
+            if handler is None:
+                continue
+            try:
+                log.info("按她的意思动手：%s %r", action, args)
+                await handler(
+                    session="", msg_type="", target="", user_id=user_id, nickname="",
+                    args=args, privileged=True, parsed=parsed, ev=None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("替她动手失败（%s）：%s", action, exc)
+        return clean
+
     async def _cmd_help(self, **_) -> str:
         prefix = self.cfg.admin.command_prefix
         return (
@@ -572,7 +679,9 @@ class FishBot:
             return QQ_OWNER_ONLY
         tid = (args or "").strip()
         if not tid:
-            return "要撤哪条？把 tid 给我（发说说时会回一个）。"
+            tid = (getattr(self.ctrl, "last_qzone_tid", lambda: "")() or "").strip()
+        if not tid:
+            return "要撤哪条？我最近没发过说说，或者你把 tid 给我。"
         try:
             await self.ctrl.delete_qzone(tid)
         except QQControlError as exc:
@@ -1010,6 +1119,10 @@ class FishBot:
                     messages.insert(-1, {"role": "system", "content": net_note})
                 stickers_before = self.stickers.counters["sent"]
                 text = await self._generate(messages, ev=ev, parsed=parsed, msg_type=msg_type, target=target, user_id=user_id)
+                if text is not None:
+                    text = await self._run_ctrl_markers(
+                        text, parsed=parsed, user_id=user_id, sender=ev.get("sender") or {}
+                    )
                 if text is None:
                     self.counters["skipped"] += 1
                     return
@@ -1462,6 +1575,111 @@ _SYSTEM_CHATS = (
     "文件传输助手", "微信团队", "微信支付", "微信运动",
     "订阅号消息", "服务通知", "折叠的群聊", "QQ团队", "QQ空间",
 )
+
+
+# ---------------------------------------------------------------- 自然语言使唤
+# 她说「换头像」「改个签名」这类话时，不必非得写斜杠命令：这里用几条窄规则把
+# 自然语言翻成和命令一样的动作。窄是有意的 —— 宁可漏判（退给模型正经聊天），
+# 也不要误判（把一句闲聊当成改资料的指令）。
+_CTRL_MARKER_RE = re.compile(r"\[\[\s*操控\s*[:：]\s*([^\[\]]{1,60})\s*\]\]")
+
+_NAT_CAPS = re.compile(
+    r"你(?:都)?能(?:做|干|帮|完成)(?:什么|啥|哪些)"
+    r"|你会(?:什么|啥|哪些)"
+    r"|有什么(?:本事|能力|功能|技能)"
+    r"|(?:列|说|讲)(?:一下|一哈)?你(?:都)?能(?:干|做)(?:的)?(?:事|活|东西|什么)"
+)
+_NAT_AVATAR = re.compile(
+    r"(?:换|改|设置|重设|更新|恢复)(?:个|下|一下|一哈|成|回)?\s*(?:你的|她|自己|我的)?\s*头像"
+    r"|头像\s*(?:换|改|恢复|重设)(?:一下|回来|掉)?"
+)
+_NAT_NICK = re.compile(
+    r"(?:改|换|设置|起)(?:个|下|一下)?\s*(?:你|她|自己|我)?\s*(?:的)?\s*(?:昵称|名字)"
+    r"|(?:昵称|名字)\s*(?:改成|换成|叫|设为)"
+)
+_NAT_SIGN = re.compile(
+    r"(?:改|换|设置|写|更新|重写)(?:个|下|一下)?\s*(?:你|她|自己|我)?\s*(?:的)?\s*(?:个性签名|签名)"
+    r"|(?:个性签名|签名)\s*(?:改成|换成|写成|设为|[:：])"
+)
+_NAT_ONLINE = re.compile(
+    r"(?:在线状态|状态)\s*(?:改成|设为|设成|调成|变成|切到|设置为)"
+    r"|(?:改成|设为|设成|调成|切成)\s*(在线|忙碌|隐身|离开|请勿打扰|Q我吧|离线)"
+)
+_NAT_QZONE_DEL = re.compile(
+    r"(?:删|撤|删除|撤掉|删掉)(?:了|掉)?\s*(?:那条|刚才|刚发|刚刚|那条刚发)?\s*(?:说说|空间说说)"
+    r"|(?:说说|空间说说)\s*(?:撤|删|删除)(?:了|掉)?"
+)
+_NAT_QZONE = re.compile(
+    r"(?:去)?(?:发|写|来)(?:一条|条|个|一个)?\s*(?:QQ)?\s*(?:空间|说说)"
+    r"|(?:空间|说说)\s*(?:发|写)"
+)
+_NAT_LIKE = re.compile(r"(?:点个赞|点赞|戳一戳)")
+
+_ONLINE_WORDS = ("在线", "忙碌", "隐身", "离开", "请勿打扰", "Q我吧", "离线")
+_QUOTE = "「」\"'“”‘’《》"
+
+
+def _nat_strip(text: str) -> str:
+    return (text or "").strip().strip("，。！？!?~… ")
+
+
+def _nat_after(text: str, keys: tuple, limit: int = 40) -> str:
+    """取「改成 / 换成 / 叫」之后的那截内容。"""
+    for k in keys:
+        i = text.find(k)
+        if i >= 0:
+            tail = _nat_strip(text[i + len(k):].strip().strip(_QUOTE))
+            if tail:
+                return tail[:limit]
+    return ""
+
+
+def _natural_intent(text: str):
+    """把一句自然语言翻成 (动作, 参数)；识别不出返回 None。"""
+    t = (text or "").strip()
+    if not t or len(t) > 90:
+        return None
+    bare = _nat_strip(t)
+    if _NAT_CAPS.search(bare):
+        return "caps", ""
+    if _NAT_QZONE_DEL.search(bare):
+        return "qzone_del", ""
+    if _NAT_AVATAR.search(bare):
+        url = re.search(r"https?://\S+", bare)
+        return "avatar", (url.group(0) if url else "")
+    if _NAT_ONLINE.search(bare):
+        m = re.search(r"(?:改成|设为|设成|调成|变成|切到|切成|换成|成|为)\s*(在线|忙碌|隐身|离开|请勿打扰|Q我吧|离线)", bare)
+        if m:
+            return "online", m.group(1)
+        for w in _ONLINE_WORDS:
+            if w in bare and not (w == "在线" and "在线" in bare.split("状态")[0] and "状态" in bare):
+                return "online", w
+        return "online", ""
+    if _NAT_NICK.search(bare):
+        return "nickname", _nat_after(bare, ("改成", "换成", "设为", "叫", "昵称是", "名字是"), 16)
+    if _NAT_SIGN.search(bare):
+        sig = _nat_after(bare, ("改成", "换成", "写成", "设为", "签名是", "签名：", "签名:"))
+        if not sig:
+            m = re.search(r"[：:]\s*(.+)$", bare)
+            sig = _nat_strip(m.group(1))[:40] if m else ""
+        return "sign", sig
+    if _NAT_QZONE.search(bare):
+        body = _nat_after(bare, ("说说", "空间"), 200)
+        body = re.sub(r"^(?:吧|呗|啊|呀|嘛)+", "", body).strip()
+        body = body.lstrip("：: ").strip()
+        for k in ("发一条", "发条", "发个", "发", "写一条", "写条", "写个", "写"):
+            if body.startswith(k):
+                body = _nat_strip(body[len(k):])
+        if any(w in bare for w in ("仅自己", "只自己", "自己可见", "不公开")) and body and "--" not in body:
+            body = f"{body} --仅自己"
+        return "qzone", body
+    if _NAT_LIKE.search(bare):
+        m = re.search(r"\d{5,12}", bare)
+        n = re.search(r"(\d{1,2})\s*(?:次|下|个)", bare)
+        if m:
+            return "like", f"{m.group(0)} {n.group(1) if n else 1}"
+        return "like", ""
+    return None
 
 
 def _platform_of(session: str) -> str:
