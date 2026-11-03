@@ -38,6 +38,7 @@ from .textutil import (
 )
 from .tools import ToolBox, ToolError, parse_tool, split_partial_tool, tools_hint
 from .vision import Vision, image_refs, is_image_url
+from .pc import PC, VOLUME_NAMES as PC_VOLUME_NAMES
 from .qqctl import QQControl, QQControlError, STATUS_CHOICES
 
 log = logging.getLogger("fishbot.bot")
@@ -66,6 +67,7 @@ class FishBot:
         self.tools = ToolBox(cfg.tools, ROOT)
         self.vision = Vision(cfg.vision, cfg.llm)
         self.ctrl = QQControl(cfg.ctrl, ROOT)
+        self.pc = PC(cfg.pc, ROOT)
         self.skills = Skills(cfg.skills, ROOT)
         self.transport: Any = None
 
@@ -96,6 +98,7 @@ class FishBot:
         log.info("%s", self.skills.status_text())
         log.info("%s", self.vision.status_text())
         log.info("%s", self.ctrl.status_text())
+        log.info("%s", self.pc.status_text())
         self.persona.load()
         if self.transport is not None:
             await self.transport.start()
@@ -262,6 +265,8 @@ class FishBot:
         self.vision.cfg = fresh.vision
         self.cfg.ctrl = fresh.ctrl
         self.ctrl.cfg = fresh.ctrl
+        self.cfg.pc = fresh.pc
+        self.pc.cfg = fresh.pc
         self.vision.llm = fresh.llm
         self.stickers.cfg = fresh.stickers
         self.stickers.load(force=True)
@@ -300,6 +305,10 @@ class FishBot:
     def _hunger(self) -> float:
         last = max(self._last_reply.values(), default=0.0) or (self._started_at - 600)
         return max(0.0, min(1.0, (time.time() - last) / 1800.0))
+
+    def _pc_ok(self, user_id: str) -> bool:
+        """电脑操控只认主人名单里的号：群主/群管理员的 role 不算数。"""
+        return str(user_id) in {str(u) for u in self.cfg.admin.users}
 
     def _is_privileged(self, user_id: str, sender: dict) -> bool:
         if user_id in self.cfg.admin.users:
@@ -542,6 +551,26 @@ class FishBot:
             "删说说": self._cmd_qzone_del,
             "点赞": self._cmd_like,
             "like": self._cmd_like,
+            "开": self._cmd_pc_open,
+            "启动": self._cmd_pc_open,
+            "打开": self._cmd_pc_open,
+            "run": self._cmd_pc_open,
+            "关": self._cmd_pc_close,
+            "关闭": self._cmd_pc_close,
+            "结束": self._cmd_pc_close,
+            "kill": self._cmd_pc_close,
+            "进程": self._cmd_pc_ps,
+            "任务": self._cmd_pc_ps,
+            "ps": self._cmd_pc_ps,
+            "软件": self._cmd_pc_apps,
+            "应用": self._cmd_pc_apps,
+            "apps": self._cmd_pc_apps,
+            "音量": self._cmd_pc_volume,
+            "声音": self._cmd_pc_volume,
+            "静音": self._cmd_pc_volume,
+            "切到": self._cmd_pc_focus,
+            "前台": self._cmd_pc_focus,
+            "最小化": self._cmd_pc_min,
         }
         handler = handlers.get(cmd)
         if handler is None:
@@ -581,6 +610,14 @@ class FishBot:
             "qzone": self._cmd_qzone,
             "qzone_del": self._cmd_qzone_del,
             "like": self._cmd_like,
+            "shot": self._cmd_shot,
+            "pc_open": self._cmd_pc_open,
+            "pc_close": self._cmd_pc_close,
+            "pc_ps": self._cmd_pc_ps,
+            "pc_apps": self._cmd_pc_apps,
+            "pc_volume": self._cmd_pc_volume,
+            "pc_focus": self._cmd_pc_focus,
+            "pc_min": self._cmd_pc_min,
         }
 
     def capabilities_text(self) -> str:
@@ -602,9 +639,10 @@ class FishBot:
             "我能干的：聊天接梗、看气氛 · 看图（你发的图我真看得见，图里有啥、写了啥都能讲）· "
             "上网查、读网页 · 看屏幕、报机器状况 · 压记忆腾地方 · "
             f"贴表情包（{n_sticker} 张）· 借来的本事（{n_skill} 套）· "
-            "操控我自己的 QQ（昵称 / 签名 / 头像 / 在线状态 / 发说说 / 删说说 / 点赞）。\n"
+            "操控我自己的 QQ（昵称 / 签名 / 头像 / 在线状态 / 发说说 / 删说说 / 点赞）· "
+            "动这台电脑（开/关软件、看进程、切窗口、调音量）· 看屏幕。\n"
             "要动手的活儿直接跟我说，不用背命令：比如「换个头像」「把签名改成今天也想被投喂」"
-            "「发条说说：今天天气不错」「给 987654321 点个赞」。"
+            "「发条说说：今天天气不错」「给 987654321 点个赞」「把微信打开」「把计算器关了」「音量小一点」。"
         )
 
     async def _maybe_natural(self, ev, parsed, session, msg_type, target, user_id, nickname, sender) -> bool:
@@ -618,7 +656,12 @@ class FishBot:
         action, args = got
         if not self._addressed(parsed, msg_type, text):
             return False
-        if action != "caps" and not getattr(self.ctrl, "enabled", False):
+        if action == "caps":
+            pass
+        elif action.startswith("pc_") or action == "shot":
+            if not getattr(self.pc, "enabled", False):
+                return False
+        elif not getattr(self.ctrl, "enabled", False):
             return False
         privileged = self._is_privileged(user_id, sender)
         if action == "caps":
@@ -667,6 +710,42 @@ class FishBot:
                 log.warning("替她动手失败（%s）：%s", action, exc)
         return clean
 
+    # ---------------------------------------------------------------- 电脑操控
+    async def _cmd_pc_open(self, *, args: str = "", privileged: bool = False, user_id: str = "", **_) -> str:
+        if not self._pc_ok(user_id):
+            return "动主人电脑这种事，只有他开口本鲸才动。"
+        return self.pc.launch(args)
+
+    async def _cmd_pc_close(self, *, args: str = "", privileged: bool = False, user_id: str = "", **_) -> str:
+        if not self._pc_ok(user_id):
+            return "关主人电脑上的东西？本鲸不听别人的。"
+        return self.pc.close(args)
+
+    async def _cmd_pc_ps(self, *, privileged: bool = False, user_id: str = "", **_) -> str:
+        if not self._pc_ok(user_id):
+            return "主人电脑上开着啥，这个不给你看。"
+        return self.pc.running_text()
+
+    async def _cmd_pc_apps(self, *, privileged: bool = False, user_id: str = "", **_) -> str:
+        if not self._pc_ok(user_id):
+            return "这个清单只给主人看。"
+        return self.pc.apps_text()
+
+    async def _cmd_pc_volume(self, *, args: str = "", privileged: bool = False, user_id: str = "", **_) -> str:
+        if not self._pc_ok(user_id):
+            return "音响是主人的，本鲸不替别人按。"
+        return self.pc.key(args or "mute")
+
+    async def _cmd_pc_focus(self, *, args: str = "", privileged: bool = False, user_id: str = "", **_) -> str:
+        if not self._pc_ok(user_id):
+            return "只给主人干活。"
+        return self.pc.focus(args)
+
+    async def _cmd_pc_min(self, *, args: str = "", privileged: bool = False, user_id: str = "", **_) -> str:
+        if not self._pc_ok(user_id):
+            return "只给主人干活。"
+        return self.pc.focus(args, minimize=True)
+
     async def _cmd_help(self, **_) -> str:
         prefix = self.cfg.admin.command_prefix
         return (
@@ -680,6 +759,11 @@ class FishBot:
             f"{prefix}搜 关键词 —— 让本鲸上网查一下\n"
             f"{prefix}看 网址 —— 让本鲸读一下这个网页\n"
             f"{prefix}截图 —— 让本鲸看一眼屏幕\n"
+            f"{prefix}开 微信 —— 让本鲸把软件打开\n"
+            f"{prefix}关 微信 —— 让本鲸把软件关掉\n"
+            f"{prefix}进程 —— 看看电脑现在开着什么\n"
+            f"{prefix}软件 —— 列出能开的软件\n"
+            f"{prefix}音量 小 —— 音量 / 静音 / 播放 / 下一首\n"
             f"{prefix}系统 —— 让本鲸报一下这台机器的情况\n"
             f"{prefix}压缩 —— 把聊过的压成一小段，给自己省地方\n"
             f"{prefix}技能 [名字] —— 看看本鲸手里借了几套本事\n"
@@ -837,6 +921,7 @@ class FishBot:
             f"\n{self.skills.status_text()}"
             f"\n{self.vision.status_text()}"
             f"\n{self.ctrl.status_text()}"
+            f"\n{self.pc.status_text()}"
         )
 
     async def _cmd_skills(self, *, args: str = "", **_) -> str:
@@ -1031,8 +1116,11 @@ class FishBot:
         await self._send_text(msg_type, target, reply)
         return True
 
-    async def _cmd_shot(self, *, msg_type: str = "private", target: str = "", **_) -> str:
+    async def _cmd_shot(self, *, msg_type: str = "private", target: str = "",
+                       user_id: str = "", **_) -> str:
         """/截图 —— 看一眼屏幕，把图发出去。"""
+        if not self._pc_ok(user_id):
+            return "屏幕只给主人看，别人可不行。"
         if not self.tools.allows("screenshot"):
             return "管理员没让本鲸看屏幕（tools.screenshot: false）。"
         if not self._image_ok(target):
@@ -1617,6 +1705,72 @@ _ONLINE_WORDS = ("在线", "忙碌", "隐身", "离开", "请勿打扰", "Q我�
 _QUOTE = "「」\"'“”‘’《》"
 
 
+_NAT_PC_OPEN = re.compile(r"(?:帮我|给我|麻烦)?(?:打开|启动|运行|开启)(?:一下|下|个)?\s*([^，。！？!?,；;]{1,14})")
+_NAT_PC_OPEN3 = re.compile(r"开(?:一下|个|下)\s*([^，。！？!?,；;]{1,14})")
+_NAT_PC_OPEN2 = re.compile(r"把([^，。！？!?,；;]{1,14}?)(?:打开|启动|运行|开起来|开一下)")
+_NAT_PC_CLOSE = re.compile(r"(?:帮我|给我|麻烦)?(?:关闭|关掉|关一下|退出|结束|杀掉|kill|杀)(?:一下|掉)?\s*([^，。！？!?,；;]{1,14})")
+_NAT_PC_CLOSE2 = re.compile(r"把([^，。！？!?,；;]{1,14}?)(?:关掉|关了|关一下|退掉|退一下)")
+_NAT_PC_PS = re.compile(r"(?:现在|此刻|目前)?(?:开着|开了|运行着)(?:哪些|什么|啥|多少)(?:软件|程序|应用|东西)|(?:进程|任务列表)|看看.{0,4}(?:开着|开了)(?:哪些|什么|啥)")
+_NAT_PC_APPS = re.compile(r"(?:你)?(?:能|可以|会|都)(?:打开|启动|开|运行)(?:哪些|什么|啥|多少)(?:软件|程序|应用)|你(?:都)?能开(?:哪些|什么|啥)")
+_NAT_PC_FOCUS = re.compile(r"(?:把)?([^，。！？!?,；;]{1,12}?)(?:切到|调到|放到|拉到)前面|切到([^，。！？!?,；;]{1,12})")
+_NAT_PC_MIN = re.compile(r"(?:把)?([^，。！？!?,；;]{0,12}?)(?:最小化|缩下去|收起来|收下去)")
+_NAT_PC_SHOT = re.compile(r"截(?:个|张)?(?:屏|图)|看一眼屏幕|看看屏幕")
+
+# 这些词一出现，说明不是在叫她动电脑，别误判
+_PC_OPEN_NOISE = ("方式", "什么", "怎么", "为啥", "为什么", "了吗", "没有", "不了",
+                  "打不开", "开心", "开玩笑", "开会", "开机", "想法")
+_PC_VOLUME_HINT = ("音量", "声音", "静音", "别吵", "播放", "暂停", "继续",
+                   "下一首", "上一首", "切歌", "换一首", "大声", "小声", "大点", "小点")
+
+
+def _pc_intent(text: str):
+    """电脑操控的自然语言识别：返回 (动作, 参数) 或 None。"""
+    t = (text or "").strip()
+    if not t:
+        return None
+    if _NAT_PC_SHOT.search(t):
+        return "shot", ""
+    if _NAT_PC_PS.search(t):
+        return "pc_ps", ""
+    if _NAT_PC_APPS.search(t):
+        return "pc_apps", ""
+    if any(k in t for k in _PC_VOLUME_HINT):
+        if any(k in t for k in ("静音", "别吵", "mute")):
+            return "pc_volume", "mute"
+        if any(k in t for k in ("下一首", "切歌", "换一首", "next")):
+            return "pc_volume", "next"
+        if any(k in t for k in ("上一首", "prev")):
+            return "pc_volume", "prev"
+        if any(k in t for k in ("暂停", "播放", "继续", "play")):
+            return "pc_volume", "play"
+        if any(k in t for k in ("大", "高")):
+            return "pc_volume", "volume_up"
+        if any(k in t for k in ("小", "低")):
+            return "pc_volume", "volume_down"
+        return "pc_volume", ""
+    m = _NAT_PC_CLOSE2.search(t) or _NAT_PC_CLOSE.search(t)
+    if m:
+        target = (m.group(1) or "").strip().strip("的了个一下吧呗呀啊 ")
+        if target and not any(w in target for w in ("机", "玩笑", "什么事")):
+            return "pc_close", target
+    m = _NAT_PC_MIN.search(t)
+    if m:
+        target = (m.group(1) or "").strip().strip("的了个一下吧呗呀啊 ")
+        if target and not any(w in target for w in _PC_OPEN_NOISE):
+            return "pc_min", target
+    m = _NAT_PC_FOCUS.search(t)
+    if m:
+        target = (m.group(1) or m.group(2) or "").strip().strip("的了个一下吧呗呀啊 ")
+        if target and not any(w in target for w in _PC_OPEN_NOISE):
+            return "pc_focus", target
+    m = _NAT_PC_OPEN2.search(t) or _NAT_PC_OPEN3.search(t) or _NAT_PC_OPEN.search(t)
+    if m:
+        target = (m.group(1) or "").strip().strip("的了个一下吧呗呀啊 ")
+        if target and not any(w in target for w in _PC_OPEN_NOISE):
+            return "pc_open", target
+    return None
+
+
 def _nat_strip(text: str) -> str:
     return (text or "").strip().strip("，。！？!?~… ")
 
@@ -1677,6 +1831,9 @@ def _natural_intent(text: str):
         if m:
             return "like", f"{m.group(0)} {n.group(1) if n else 1}"
         return "like", ""
+    got = _pc_intent(bare)
+    if got:
+        return got
     return None
 
 

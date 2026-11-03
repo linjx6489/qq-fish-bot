@@ -246,44 +246,42 @@ class VisionConfig:
     prompt: str = ""  # 留空用内置提示词
 
 
+
+
+
+
+
+
 @dataclass
 class CtrlConfig:
-    """让她能操控自己的 QQ：资料、在线状态、空间说说、点赞。"""
+    """操控她自己的 QQ：资料、在线状态、空间说说、点赞。"""
 
     enabled: bool = True  # 总开关
     nickname: bool = True  # 允许改昵称
     signature: bool = True  # 允许改个性签名
     avatar: bool = True  # 允许换头像
     status: bool = True  # 允许改在线状态
-    like: bool = True  # 允许给好友点赞
-    qzone_enabled: bool = True  # 允许发 QQ 空间说说
+    like: bool = True  # 允许点赞
+    qzone_enabled: bool = True  # 允许发空间说说
     qzone_delete: bool = True  # 允许删自己刚发的说说
-    default_ugc_right: int = 1  # 说说默认可见范围：1 所有人 4 好友 16 部分好友 64 仅自己 128 部分好友不可见
-    max_qzone_per_day: int = 5  # 每天最多发几条说说（0=不限）
-    only_owner: bool = True  # 只有主人能下令（别人说了不算）
-
-
-@dataclass
-class CtrlConfig:
-    """QQ 操控：改昵称/签名/头像/在线状态，发空间说说，点赞。"""
-
-    enabled: bool = True  # 总开关
-    qzone_enabled: bool = True  # 单独关掉「发空间」
-    default_ugc_right: int = 1  # 说说默认可见：1 所有人 4 好友 16 部分好友 64 仅自己 128 部分好友不可见
-    max_qzone_per_day: int = 5  # 一天最多发几条说说（0 = 不限）
-    owner_only: bool = True  # 只有主人能用这些命令（改的是她自己的账号）
-
-
-@dataclass
-class CtrlConfig:
-    """操控 QQ：改昵称/签名/头像/在线状态，发空间说说，点赞。"""
-
-    enabled: bool = True  # 总开关
-    qzone_enabled: bool = True  # 是否允许发 QQ 空间
-    max_qzone_per_day: int = 5  # 一天最多发几条说说（0=不限）
-    default_ugc_right: int = 1  # 说说的默认可见范围：1所有人 4好友 16部分好友 64仅自己 128部分不可见
-    max_chars: int = 600  # 一条说说最多多少字
+    default_ugc_right: int = 1  # 说说可见：1 所有人 / 4 好友 / 16 部分好友 / 64 仅自己 / 128 部分不可见
+    max_qzone_per_day: int = 5  # 一天最多发几条（0 = 不限）
+    max_chars: int = 600  # 单条说说的字数上限
     announce: bool = True  # 干完活回报一句结果
+    owner_only: bool = True  # 只有主人能下令
+
+
+@dataclass
+class PCConfig:
+    """操控这台电脑：开关软件、看进程、切窗口、按键。"""
+
+    enabled: bool = True  # 总开关
+    allow_launch: bool = True  # 允许开软件
+    allow_close: bool = True  # 允许关软件（系统进程与她自己的进程有黑名单，关不动）
+    allow_focus: bool = True  # 允许切窗口 / 最小化
+    allow_keys: bool = True  # 允许按媒体键（音量 / 播放 / 切歌）
+    max_actions_per_minute: int = 10  # 每分钟最多动几次
+    aliases: dict = field(default_factory=dict)  # 额外别名：{"我的软件": "xxx.exe"}
 
 
 @dataclass
@@ -301,9 +299,7 @@ class AppConfig:
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     ctrl: CtrlConfig = field(default_factory=CtrlConfig)
-    ctrl: CtrlConfig = field(default_factory=CtrlConfig)
-    ctrl: CtrlConfig = field(default_factory=CtrlConfig)
-    ctrl: CtrlConfig = field(default_factory=CtrlConfig)
+    pc: PCConfig = field(default_factory=PCConfig)
     log_level: str = "INFO"
 
     # ---------- 加载 ----------
@@ -327,6 +323,7 @@ class AppConfig:
             skills=_section(SkillsConfig, raw.get("skills")),
             vision=_section(VisionConfig, raw.get("vision")),
             ctrl=_section(CtrlConfig, raw.get("ctrl")),
+            pc=_section(PCConfig, raw.get("pc")),
             log_level=str(raw.get("log_level", "INFO")),
         )
         cfg.apply_env()
@@ -406,12 +403,12 @@ class AppConfig:
             for m in (self.vision.fallback_models or [])
             if str(m).strip()
         ]
-        self.ctrl.max_qzone_per_day = max(0, int(self.ctrl.max_qzone_per_day or 0))
-        if self.ctrl.default_ugc_right not in (1, 4, 16, 64, 128):
-            self.ctrl.default_ugc_right = 1
         if self.onebot.mode not in ("forward", "reverse"):
             raise ValueError(f"onebot.mode 只能是 forward 或 reverse，收到：{self.onebot.mode}")
         self.ctrl.max_qzone_per_day = max(0, min(50, int(self.ctrl.max_qzone_per_day or 0)))
+        self.ctrl.max_chars = max(50, min(4000, int(self.ctrl.max_chars or 600)))
+        self.pc.max_actions_per_minute = max(0, min(120, int(self.pc.max_actions_per_minute or 10)))
+        self.pc.aliases = {str(k): str(v) for k, v in (self.pc.aliases or {}).items() if str(k).strip()}
         self.ctrl.default_ugc_right = int(self.ctrl.default_ugc_right or 1)
         if self.ctrl.default_ugc_right not in (1, 4, 16, 64, 128):
             self.ctrl.default_ugc_right = 1
