@@ -285,6 +285,29 @@ class PCConfig:
 
 
 @dataclass
+class ArtConfig:
+    """画画 / 动画 / 设计：走本机 image-gen 通道 + ffmpeg + Pillow。"""
+
+    enabled: bool = True
+    gen_python: str = ""          # 空 = 用 fishbot/art.py 里的默认（DSH 运行时 python）
+    gen_script: str = ""          # 空 = 用默认（image-gen skill 的 genimage.py）
+    ffmpeg: str = ""              # 空 = 自动找
+    out_dir: str = "data/art"     # 产物落这里（相对项目根）
+    model: str = "gpt-image-2.5-1k"
+    size: str = "1024x1024"       # 留空 = 按模型后缀推断
+    timeout: int = 600            # 单张超时（秒）；一张 1k 图 40~90 秒是正常的
+    daily_limit: int = 12         # 每天最多出几张（0 = 不限）
+    anim_max_frames: int = 4      # 动画 / 分镜最多用几张图
+    anim_seconds: float = 6.0     # 动画时长（秒）
+    anim_size: int = 768          # 动画边长（像素）
+    gif_side: int = 640           # 动图边长（越小文件越小，QQ 里够看）
+    gif_colors: int = 96          # 动图减色数（96 够用，越小文件越小）
+    ai_cooldown_seconds: float = 1800.0   # 生图挂了之后多久不再试它（秒）
+    style_suffix: str = "，二次元插画风，柔和光影，干净构图，画面完整"
+    announce: bool = True         # 动手前先说一句「在画了」
+
+
+@dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     persona: PersonaConfig = field(default_factory=PersonaConfig)
@@ -298,6 +321,7 @@ class AppConfig:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    art: ArtConfig = field(default_factory=ArtConfig)
     ctrl: CtrlConfig = field(default_factory=CtrlConfig)
     pc: PCConfig = field(default_factory=PCConfig)
     log_level: str = "INFO"
@@ -322,6 +346,7 @@ class AppConfig:
             tools=_section(ToolsConfig, raw.get("tools")),
             skills=_section(SkillsConfig, raw.get("skills")),
             vision=_section(VisionConfig, raw.get("vision")),
+            art=_section(ArtConfig, raw.get("art")),
             ctrl=_section(CtrlConfig, raw.get("ctrl")),
             pc=_section(PCConfig, raw.get("pc")),
             log_level=str(raw.get("log_level", "INFO")),

@@ -1291,6 +1291,56 @@ schtasks /change /tn FishBotWatchdog /enable     :: 恢复
 </code></pre>
 <p>（<strong>不动 NapCat 和你的 QQ</strong>）。重新开就双击 <code>boot_all.bat</code>。</p>
 <hr />
+<h2>画画 / 动画 / 设计（rt）</h2>
+<p>她可以画图、做动图、做海报/壁纸/字卡/分镜，指令直接说人话就行（只有主人能让她动笔）。</p>
+<table>
+<thead>
+<tr>
+<th>你说</th>
+<th>她做</th>
+<th>走哪条路</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>「画一张在海边吃白饭的蓝色虎鲸」</td>
+<td>AI 生图</td>
+<td>本机生图通道（image-gen skill 的 genimage.py，上游 aiapi / NVIDIA NIM）</td>
+</tr>
+<tr>
+<td>「做个动画：鲸鲸挥手」</td>
+<td>动图（GIF + MP4），带推近/淡入淡出</td>
+<td>生图通道不可用时自动改用她自己的表情包串成动图</td>
+</tr>
+<tr>
+<td>「做张海报 标题：鲸鲸的一周 副标题：每天都有白米饭」</td>
+<td>1024 竖版海报，标题副标题自动排版</td>
+<td>有通道就用 AI 底图，没有就手工渐变排版</td>
+</tr>
+<tr>
+<td>「来张壁纸」</td>
+<td>渐变 + 光斑壁纸（几秒出）</td>
+<td>纯本地 Pillow，不联网</td>
+</tr>
+<tr>
+<td>「做个字卡：今天也要好好吃饭」</td>
+<td>拿她的表情包当底 + 大字</td>
+<td>纯本地 Pillow</td>
+</tr>
+<tr>
+<td>「来个四格分镜：早上起床」</td>
+<td>四格拼版</td>
+<td>走生图通道（不可用时退成表情包动图）</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>命令版：/画、/动画、/海报、/壁纸、/字卡、/分镜。</li>
+<li>她也能自己发起：回复里写 [[画:…]]、[[动画:…]]、[[海报:标题|副标题]]、[[壁纸:…]]、[[字卡:…]]、[[分镜:…]]，系统替她做。</li>
+<li>生图<strong>很慢</strong>（一张 40~90 秒，NVIDIA 那条线有时 70 秒才超时），所以她会先说一句「等我一分钟」，做完直接把图发过去。</li>
+<li>生图通道挂掉（余额不足 / 上游 5xx）时她会<strong>熔断 30 分钟</strong>（rt.ai_cooldown_seconds），这期间直接用本地手工路线出图，不再白等。</li>
+<li>配置段 rt:：enabled、model、size、gen_python、gen_script、fmpeg、daily_limit、nim_frames、nim_size、gif_side、gif_colors、i_cooldown_seconds、out_dir。</li>
+</ul>
 <h2>故障排查</h2>
 <table>
 <thead>

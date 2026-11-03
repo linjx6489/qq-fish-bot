@@ -39,6 +39,7 @@ from .textutil import (
 from .tools import ToolBox, ToolError, parse_tool, split_partial_tool, tools_hint
 from .vision import Vision, image_refs, is_image_url
 from .pc import PC, VOLUME_NAMES as PC_VOLUME_NAMES
+from .art import ArtStudio, ArtError
 from .qqctl import QQControl, QQControlError, STATUS_CHOICES
 
 log = logging.getLogger("fishbot.bot")
@@ -68,6 +69,7 @@ class FishBot:
         self.vision = Vision(cfg.vision, cfg.llm)
         self.ctrl = QQControl(cfg.ctrl, ROOT)
         self.pc = PC(cfg.pc, ROOT)
+        self.art = ArtStudio(cfg.art, ROOT)
         self.skills = Skills(cfg.skills, ROOT)
         self.transport: Any = None
 
@@ -99,6 +101,8 @@ class FishBot:
         log.info("%s", self.vision.status_text())
         log.info("%s", self.ctrl.status_text())
         log.info("%s", self.pc.status_text())
+        await self.art.start()
+        log.info("%s", self.art.status_text())
         self.persona.load()
         if self.transport is not None:
             await self.transport.start()
@@ -267,6 +271,8 @@ class FishBot:
         self.ctrl.cfg = fresh.ctrl
         self.cfg.pc = fresh.pc
         self.pc.cfg = fresh.pc
+        self.cfg.art = fresh.art
+        self.art.cfg = fresh.art
         self.vision.llm = fresh.llm
         self.stickers.cfg = fresh.stickers
         self.stickers.load(force=True)
@@ -524,6 +530,18 @@ class FishBot:
             "看": self._cmd_look,
             "读": self._cmd_look,
             "截图": self._cmd_shot,
+            "画": self._cmd_draw,
+            "绘画": self._cmd_draw,
+            "画画": self._cmd_draw,
+            "draw": self._cmd_draw,
+            "动画": self._cmd_anim,
+            "动图": self._cmd_anim,
+            "anim": self._cmd_anim,
+            "海报": self._cmd_poster,
+            "封面": self._cmd_poster,
+            "壁纸": self._cmd_wallpaper,
+            "字卡": self._cmd_card,
+            "分镜": self._cmd_sheet,
             "截屏": self._cmd_shot,
             "screenshot": self._cmd_shot,
             "系统": self._cmd_sysinfo,
@@ -640,6 +658,7 @@ class FishBot:
             "上网查、读网页 · 看屏幕、报机器状况 · 压记忆腾地方 · "
             f"贴表情包（{n_sticker} 张）· 借来的本事（{n_skill} 套）· "
             "操控我自己的 QQ（昵称 / 签名 / 头像 / 在线状态 / 发说说 / 删说说 / 点赞）· "
+            "画画、做动画、做海报 / 壁纸 / 字卡 / 分镜（走本机生图通道）· "
             "动这台电脑（开/关软件、看进程、切窗口、调音量）· 看屏幕。\n"
             "要动手的活儿直接跟我说，不用背命令：比如「换个头像」「把签名改成今天也想被投喂」"
             "「发条说说：今天天气不错」「给 987654321 点个赞」「把微信打开」「把计算器关了」「音量小一点」。"
@@ -661,6 +680,9 @@ class FishBot:
         elif action.startswith("pc_") or action == "shot":
             if not getattr(self.pc, "enabled", False):
                 return False
+        elif action in _ART_ACTIONS:
+            if not getattr(self.art, "enabled", False):
+                return False
         elif not getattr(self.ctrl, "enabled", False):
             return False
         privileged = self._is_privileged(user_id, sender)
@@ -681,7 +703,8 @@ class FishBot:
             await self._send_text(msg_type, target, reply, ev=None, at_user=None)
         return True
 
-    async def _run_ctrl_markers(self, text: str, *, parsed, user_id: str, sender: dict) -> str:
+    async def _run_ctrl_markers(self, text: str, *, parsed, user_id: str, sender: dict,
+                                msg_type: str = "", target: str = "", session: str = "") -> str:
         """她回复里的 [[操控:换头像]] 这类标记，由系统替她真做掉。"""
         if not text or "[[" not in text:
             return text
@@ -708,6 +731,193 @@ class FishBot:
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("替她动手失败（%s）：%s", action, exc)
+        return await self._run_art_markers(clean, sender=sender, user_id=user_id,
+                                          msg_type=msg_type, target=target, session=session)
+
+    # ---------------------------------------------------------------- 画画 / 动画 / 设计
+    _ART_CAPTION = {
+        "draw": "画好了",
+        "anim": "动图做好了，给你看",
+        "poster": "海报出来了",
+        "wallpaper": "壁纸给你",
+        "card": "字卡做好了",
+        "sheet": "分镜拼好了",
+        "photos": "给你串了段会动的",
+    }
+
+    def _art_ok(self, user_id: str) -> bool:
+        """画画/动画要花额度，只认主人。"""
+        return str(user_id) in (self.cfg.admin.users or [])
+
+    def _art_ack(self, kind: str, arg: str) -> str:
+        if kind == "draw":
+            return f"好，我画「{arg}」，大概一分钟，画好直接发给你，别急。"
+        if kind == "anim":
+            return f"行，我做个会动的「{arg}」，这个慢一点，一兩分钟，好了就发。"
+        if kind == "poster":
+            return f"海报「{arg.replace('|', ' / ')}」这就排，等我一分钟。"
+        if kind == "wallpaper":
+            return "壁纸马上给你。"
+        if kind == "card":
+            return "字卡这就动手。"
+        return "分镜这就画，几张图要等一会儿。"
+
+    async def _art_worker(self, kind: str, arg: str, *, msg_type: str, target: str, session: str) -> None:
+        """后台把活儿做完再发过去，免得她沉默一分多钟。"""
+        try:
+            if kind == "draw":
+                piece = await self.art.draw(arg)
+            elif kind == "anim":
+                piece = await self.art.animate(arg)
+            elif kind == "poster":
+                title, _, sub = arg.partition("|")
+                title = re.sub(r"^\s*(?:标题|主标题)\s*[:：是为]?\s*", "", title.strip())
+                sub = re.sub(r"^\s*副标题\s*[:：是为]?\s*", "", sub.strip())
+                piece = await self.art.poster(title, sub)
+            elif kind == "wallpaper":
+                piece = await self.art.wallpaper(arg)
+            elif kind == "card":
+                piece = await self.art.card(arg)
+            elif kind == "sheet":
+                piece = await self.art.sheet(arg)
+            elif kind == "photos":
+                import random
+
+                folder = self.art.root / "assets" / "stickers"
+                pool = sorted(p for p in folder.glob("*.png") if p.is_file())
+                if not pool:
+                    raise ArtError("手里一张图都没有")
+                random.Random(arg).shuffle(pool)
+                picked = pool[:3]
+                caps = [arg[:14]] + [""] * (len(picked) - 1)
+                piece = await self.art.animate_photos(picked, seconds=6.0, captions=caps)
+            else:
+                return
+        except ArtError as exc:
+            self.last_art_error = str(exc)[:200]
+            fallback = {"draw": "card", "anim": "photos", "sheet": "photos"}.get(kind)
+            if fallback:
+                log.warning("%s 走不通（%s），降级成 %s", kind, exc, fallback)
+                await self._send_text(msg_type, target, f"那条线走不通（{str(exc)[:60]}），我换个法子给你做。", ev=None, at_user=None)
+                try:
+                    if fallback == "card":
+                        piece = await self.art.card(arg)
+                        kind = "card"
+                    else:
+                        import random
+
+                        folder = self.art.root / "assets" / "stickers"
+                        pool = sorted(p for p in folder.glob("*.png") if p.is_file())
+                        if not pool:
+                            raise ArtError("手里一张图都没有") from exc
+                        random.Random(arg).shuffle(pool)
+                        piece = await self.art.animate_photos(pool[:3], seconds=6.0, captions=[arg[:14], "", ""])
+                        kind = "photos"
+                except Exception as inner:  # noqa: BLE001
+                    await self._send_text(msg_type, target, f"手工也没做成：{str(inner)[:100]}", ev=None, at_user=None)
+                    return
+            else:
+                await self._send_text(msg_type, target, f"没做成：{exc}", ev=None, at_user=None)
+                return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("画画出岔子（%s）：%s", kind, exc)
+            await self._send_text(msg_type, target, f"半路出岔子了：{str(exc)[:120]}", ev=None, at_user=None)
+            return
+
+        sent = await self._send_image(msg_type, target, piece.path)
+        if sent:
+            cap = self._ART_CAPTION.get(kind, "做好了")
+            extra = f"（{piece.seconds:.0f} 秒"
+            if piece.frames > 1:
+                extra += f"·用了 {piece.frames} 张图"
+            extra += "）"
+            if kind != "anim":
+                await self._send_text(msg_type, target, f"{cap}{extra}", ev=None, at_user=None)
+        else:
+            await self._send_text(msg_type, target, f"图做出来了（{piece.path.name}），但没发出去，你看看日志吧。", ev=None, at_user=None)
+        if session:
+            try:
+                await self.mem.add(session, "assistant", f"（我给主人做了东西：{kind} —— {arg[:60]}）")
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _art_guarded(self, kind: str, arg: str, *, msg_type: str, target: str, session: str) -> None:
+        """同一时间只跑一个出图任务（这台机器内存不富裕，别并发折腾）。"""
+        global _ART_GATE
+        if _ART_GATE is None:
+            _ART_GATE = asyncio.Lock()
+        async with _ART_GATE:
+            await self._art_worker(kind, arg, msg_type=msg_type, target=target, session=session)
+
+    def _art_spawn(self, kind: str, arg: str, *, msg_type: str, target: str, user_id: str, session: str, privileged: bool = False) -> str:
+        if not (privileged or self._art_ok(user_id)):
+            return "画画这种事本鲸只听主人的。"
+        if not self.art.enabled:
+            return "画画被关了（art.enabled: false）。"
+        arg = (arg or "").strip()
+        if not arg:
+            return "想画什么？说清楚点我才能下手。"
+        need = 4 if kind in ("anim", "sheet") else 1
+        if self.art.over_quota(need):
+            return f"今天画够了（{self.art.quota_text()}），明天再画吧。"
+        why = self.art.ready_reason
+        if kind == "anim" and why:
+            log.warning("生图通道不可用（%s），动画改成用表情包串", why)
+            asyncio.create_task(self._art_guarded("photos", arg, msg_type=msg_type, target=target, session=session))
+            return f"生图那条线现在走不通（{why}），我用现成的图给你串一段会动的。"
+        if kind == "draw" and why:
+            # 生图通道不可用（没额度 / 上游挂了）→ 改用手工排版，别把活儿撂下
+            log.warning("生图通道不可用（%s），改成手工字卡", why)
+            asyncio.create_task(self._art_guarded("card", arg, msg_type=msg_type, target=target, session=session))
+            return f"生图那条线现在走不通（{why}），我先用手工排版给你做一张，凑合看。"
+        asyncio.create_task(self._art_guarded(kind, arg, msg_type=msg_type, target=target, session=session))
+        return self._art_ack(kind, arg)
+
+    async def _cmd_draw(self, *, args: str = "", user_id: str = "", msg_type: str = "", target: str = "",
+                        session: str = "", privileged: bool = False, **_) -> str:
+        return self._art_spawn("draw", args, msg_type=msg_type, target=target, user_id=user_id, session=session, privileged=privileged)
+
+    async def _cmd_anim(self, *, args: str = "", user_id: str = "", msg_type: str = "", target: str = "",
+                        session: str = "", privileged: bool = False, **_) -> str:
+        return self._art_spawn("anim", args, msg_type=msg_type, target=target, user_id=user_id, session=session, privileged=privileged)
+
+    async def _cmd_poster(self, *, args: str = "", user_id: str = "", msg_type: str = "", target: str = "",
+                          session: str = "", privileged: bool = False, **_) -> str:
+        return self._art_spawn("poster", args.replace("|", "|") or "", msg_type=msg_type, target=target, user_id=user_id, session=session, privileged=privileged)
+
+    async def _cmd_wallpaper(self, *, args: str = "", user_id: str = "", msg_type: str = "", target: str = "",
+                             session: str = "", privileged: bool = False, **_) -> str:
+        if not (args or "").strip():
+            args = "鲸鲸"
+        return self._art_spawn("wallpaper", args, msg_type=msg_type, target=target, user_id=user_id, session=session, privileged=privileged)
+
+    async def _cmd_card(self, *, args: str = "", user_id: str = "", msg_type: str = "", target: str = "",
+                        session: str = "", privileged: bool = False, **_) -> str:
+        return self._art_spawn("card", args, msg_type=msg_type, target=target, user_id=user_id, session=session, privileged=privileged)
+
+    async def _cmd_sheet(self, *, args: str = "", user_id: str = "", msg_type: str = "", target: str = "",
+                         session: str = "", privileged: bool = False, **_) -> str:
+        return self._art_spawn("sheet", args, msg_type=msg_type, target=target, user_id=user_id, session=session, privileged=privileged)
+
+    async def _run_art_markers(self, text: str, *, sender: dict, user_id: str, msg_type: str = "", target: str = "", session: str = "") -> str:
+        """她回话里的 [[画:…]] / [[动画:…]] 这类标记，由系统替她做掉。"""
+        if not text or "[[" not in text:
+            return text
+        found = _ART_MARKER_RE.findall(text)
+        if not found:
+            return text
+        clean = _ART_MARKER_RE.sub("", text).strip()
+        if not self._is_privileged(user_id, sender):
+            return clean
+        for kind, arg in found[:2]:
+            action = {"画": "draw", "绘画": "draw", "画画": "draw", "动画": "anim", "动图": "anim",
+                      "海报": "poster", "封面": "poster", "壁纸": "wallpaper", "字卡": "card", "分镜": "sheet"}.get(kind, "")
+            if not action:
+                continue
+            log.info("按她的意思画：%s %r", action, arg)
+            note = self._art_spawn(action, arg, msg_type=msg_type, target=target, user_id=user_id, session=session, privileged=True)
+            if note and msg_type and target:
+                await self._send_text(msg_type, target, note, ev=None, at_user=None)
         return clean
 
     # ---------------------------------------------------------------- 电脑操控
@@ -775,6 +985,13 @@ class FishBot:
             f"{prefix}说说 [文字] —— 发一条 QQ 空间说说（可带图，加 --仅自己 就只自己可见）\n"
             f"{prefix}删说说 tid —— 撤掉刚发的那条\n"
             f"{prefix}点赞 QQ号 [次数] —— 给那个人点个赞\n"
+            f"\n—— 画画 / 动画 / 设计 ——\n"
+            f"{prefix}画 描述 —— 让本鲸画一张图（走本机生图通道）\n"
+            f"{prefix}动画 描述 —— 做一段会动的（GIF + MP4）\n"
+            f"{prefix}海报 标题 | 副标题 —— 做张海报 / 封面\n"
+            f"{prefix}壁纸 [文字] —— 渐变壁纸，几秒就出\n"
+            f"{prefix}字卡 文字 —— 拿表情包做字卡 / 梗图\n"
+            f"{prefix}分镜 描述 —— 四格分镜拼版\n"
             f"{prefix}闭嘴 / {prefix}起床 —— 管理员开关本群回复"
         )
 
@@ -1274,7 +1491,7 @@ class FishBot:
                 text = await self._generate(messages, ev=ev, parsed=parsed, msg_type=msg_type, target=target, user_id=user_id)
                 if text is not None:
                     text = await self._run_ctrl_markers(
-                        text, parsed=parsed, user_id=user_id, sender=ev.get("sender") or {}
+                        text, parsed=parsed, user_id=user_id, sender=ev.get("sender", msg_type=msg_type, target=target, session=session) or {}
                     )
                 if text is None:
                     self.counters["skipped"] += 1
@@ -1786,6 +2003,57 @@ def _nat_after(text: str, keys: tuple, limit: int = 40) -> str:
     return ""
 
 
+_ART_VERB = r"(?:帮我|给我|替我|麻烦你?|能不能|可以|来|去)?\s*(?:画|绘制|绘|生成|做|出|设计|搞)(?:一|1)?(?:张|幅|个|副|段|部|套)?"
+_NAT_ANIM = re.compile(r"(?:动画|动图|会动的|动起来|小视频|GIF|gif)")
+_NAT_SHEET = re.compile(r"(?:分镜|四格|条漫|连环画|漫画)")
+_NAT_POSTER = re.compile(r"(?:海报|封面|宣传图|头图|主视觉|Banner|banner|KV)")
+_NAT_WALL = re.compile(r"(?:壁纸|背景图|锁屏|桌面图)")
+_NAT_CARD = re.compile(r"(?:字卡|梗图|文字图|台词卡|配字图)")
+_NAT_DRAW = re.compile(_ART_VERB + r"\s*(?:图|画|插画|图片|照片|肖像|立绘|场景|画作|一张)?\s*[:：]?\s*(?P<arg>.{1,90})")
+_ART_MARKER_RE = re.compile(r"\[\[\s*(画|绘画|画画|动画|动图|海报|封面|壁纸|字卡|分镜)\s*[:：]\s*([^\[\]]{1,120})\s*\]\]")
+
+
+_ART_GATE = None
+_ART_ACTIONS = ("draw", "anim", "poster", "wallpaper", "card", "sheet")
+
+
+def _art_intent(text: str):
+    """把「画一张…」「做个动画…」翻成 (动作, 参数)。"""
+    t = (text or "").strip()
+    if not t:
+        return None
+    for pat, action in (
+        (_NAT_SHEET, "sheet"),
+        (_NAT_ANIM, "anim"),
+        (_NAT_POSTER, "poster"),
+        (_NAT_WALL, "wallpaper"),
+        (_NAT_CARD, "card"),
+    ):
+        if pat.search(t):
+            arg = _nat_after(
+                t,
+                ("分镜", "四格", "条漫", "连环画", "漫画", "动画", "动图", "会动的", "动起来", "小视频",
+                 "GIF", "gif", "海报", "封面", "宣传图", "头图", "主视觉", "Banner", "banner", "KV",
+                 "壁纸", "背景图", "锁屏", "桌面图", "字卡", "梗图", "文字图", "台词卡", "配字图"),
+                90,
+            )
+            arg = re.sub(r"^(?:吧|呗|啊|呀|嘛|的|吧的|来|一个|个)+", "", arg).strip("：: ,，。")
+            if action == "poster":
+                mt = re.search(r"标题\s*(?:是|为|叫|[:：])?\s*([^，。;；|]{1,30}?)(?=\s*副标题|\s*[，。;；]|\$)", arg)
+                ms = re.search(r"副标题\s*(?:是|为|[:：])?\s*([^，。;；|]{1,40})", arg)
+                if mt or ms:
+                    title = (mt.group(1).strip() if mt else arg) or arg
+                    return "poster", f"{title}|{ms.group(1).strip() if ms else ''}"
+            return action, arg
+    m = _NAT_DRAW.search(t)
+    if m:
+        arg = (m.group("arg") or "").strip()
+        arg = re.sub(r"^(?:吧|呗|啊|呀|嘛|的|吧的)+", "", arg).strip("：: ,，。")
+        if arg and not _NAT_CAPS.search(arg) and not _NAT_QZONE.search(arg):
+            return "draw", arg
+    return None
+
+
 def _natural_intent(text: str):
     """把一句自然语言翻成 (动作, 参数)；识别不出返回 None。"""
     t = (text or "").strip()
@@ -1794,6 +2062,9 @@ def _natural_intent(text: str):
     bare = _nat_strip(t)
     if _NAT_CAPS.search(bare):
         return "caps", ""
+    _art_got = _art_intent(bare)
+    if _art_got:
+        return _art_got
     if _NAT_QZONE_DEL.search(bare):
         return "qzone_del", ""
     if _NAT_AVATAR.search(bare):

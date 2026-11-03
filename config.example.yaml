@@ -169,6 +169,20 @@ vision:
   keep_recent: 50               # 只留最近这么多张
   prompt: ''                    # 留空用内置提示词
 
+# ---------- 画画 / 动画 / 设计 ----------
+art:
+  enabled: true
+  out_dir: data/art
+  # 模型：走本机 image-gen skill 打通的通道（aiapi 上游需余额，NVIDIA NIM 备用）
+  model: gpt-image-2.5-1k
+  size: 1024x1024
+  timeout: 600                # 一张 1k 图 40~90 秒是正常的，别往小里调
+  daily_limit: 12             # 每天最多出几张（0 = 不限）
+  anim_max_frames: 4          # 做动画 / 分镜最多用几张图
+  anim_seconds: 6.0           # 动画时长
+  anim_size: 768              # 动画边长
+  announce: true              # 动手前先说一句「在画了」
+
 # ---------- 管理 ----------
 
 # ---------- 操控 QQ ----------
