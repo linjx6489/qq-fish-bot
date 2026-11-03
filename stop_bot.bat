@@ -12,9 +12,9 @@ echo ==================================================
 echo.
 echo  This will:
 echo    1. pause the watchdog scheduled task
-echo    2. stop the bot and the WeChat bridge
+echo    2. stop the bot
 echo.
-echo  It will NOT touch NapCat or your QQ / WeChat.
+echo  It will NOT touch NapCat or your QQ.
 echo.
 
 cd /d "%BOT_DIR%" || (

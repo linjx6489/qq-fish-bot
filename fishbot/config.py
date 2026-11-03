@@ -151,6 +151,9 @@ class AutonomyConfig:
     min_idle_minutes: float = 20.0  # 最近这么久内有人聊过，就安分一点
     follow_up_after_hours: float = 3.0  # 自己上句没人接，隔这么久才允许回访
     max_tokens: int = 200  # 自主活动内部生成的 token 上限
+    signature_interval_days: float = 15.0  # 签名限流：这么多天内只准自己动一次
+    greet_interval_hours: float = 12.0  # 每隔这么久主动跟主人打个招呼，0=关
+    greet_targets: list = field(default_factory=list)  # 招呼发给谁，空=发管理员
 
     def parsed_quiet_hours(self) -> tuple[int, int] | None:
         """返回 (起始小时, 结束小时)，支持跨天；解析不出来就是 None。"""
@@ -166,77 +169,6 @@ class AutonomyConfig:
         if not (0 <= start <= 23 and 0 <= end <= 24):
             return None
         return start, end
-
-
-@dataclass
-class TTSConfig:
-    """语音：把回复用「说的」发出去。
-
-    音色参考录音：``D:\\LENOVO\\Documents\\录音\\录音机-20261020-2003.m4a``
-    （中位基频 258.1 Hz、语速约 2.5 字/秒）。
-
-    注意 ``zh-CN-XiaobeiNeural`` 这个名字**在服务端不存在**，写上去会被模糊匹配成
-    辽宁方言音色，所以现在用 ``zh-CN-XiaoyiNeural``（年轻、活泼）压音高后当底子。
-    """
-
-    enabled: bool = True
-    engine: str = "edge"  # edge=联网神经网络音色 | sapi=系统离线语音 | auto=先 edge 后 sapi | clone=本机音色克隆
-    clone_url: str = "http://127.0.0.1:8799"  # XTTS 音色克隆服务地址（engine=clone 时用）
-    clone_timeout: float = 180.0  # 克隆合成一次最多等多久（CPU 上慢，别设太小）
-    clone_speed: float = 1.0  # 传给克隆服务的语速
-    clone_fallback: bool = True  # 克隆服务挂了就退回 edge，不让整条回复哑掉
-    clone_max_chars: int = 60  # 超过这个字数的句子不克隆（CPU 上太慢），交给 edge
-    rvc_url: str = "http://127.0.0.1:8799"  # 音色转换服务（engine=rvc 时用）
-    rvc_pitch: float = 0.0  # 半音，把音高顶到目标（0 = 不动）
-    rvc_timeout: float = 300.0  # 转换一次最多等多久（CPU 上慢）
-    # 表现力旋钮（2026-10-22 按用户的 A/B 反馈加的，值由听感定）
-    rvc_protect: float = 0.5
-    rvc_filter_radius: int = 5
-    rvc_rms_mix: float = 0.15
-    # 这台机器内存小：引擎按需启动、闲时关掉，内存不够就不用
-    rvc_idle_seconds: float = 180.0
-    rvc_boot_timeout: float = 150.0
-    rvc_min_free_mb: int = 500
-    rvc_fallback: bool = True  # 转换服务挂了就退回纯 edge，不让整条回复哑掉
-    rvc_max_chars: int = 80  # 超过这个字数就不转换（CPU 上太慢），交给 edge
-    rvc_engine_dir: str = ""  # 音色引擎目录（里面要有 .venv 与 rvc_server.py）
-    rvc_model: str = ""  # RVC 模型 .pth（留空用引擎默认）
-    rvc_threads: int = 2  # 引擎 torch 线程数；这台机器内存小，别开大
-    voice: str = "zh-CN-XiaoyiNeural"  # edge 音色（甜、年轻；方言名会被守卫换掉）
-    sapi_voice: str = "Microsoft Huihui Desktop"  # sapi 兜底音色
-    rate: str = "-14%"  # 基础语速（慢一点才像在聊天，快了就是播报腔）
-    volume: str = "+0%"
-    pitch: str = "-20Hz"  # 基础音高（Xiaoyi 原生偏高，压低到录音附近）
-    lively: bool = True  # 每次合成微调语速，听着不那么机械
-    rate_jitter: int = 2  # 在基础语速上再随机 ± 这么多 %
-    pitch_jitter: int = 0  # 音高不抖：音高一动，同一个人就变成了好几个人
-    mode: str = "command"  # off=永不 | command=开了才发 | auto=按概率自动发
-    probability: float = 0.25  # auto 模式每条回复转语音的概率
-    max_chars: int = 220  # 超过这个长度才分段（分段后会用 ffmpeg 拼回一条）
-    send_text_along: bool = False  # 发语音时是否再补一份文字（默认不补，免得刷屏）
-    ffmpeg: str = ""  # 长句拼接用；留空自动找
-    dir: str = "data/voice"
-    keep_files: int = 60
-    timeout: float = 30.0
-
-
-@dataclass
-class WeChatConfig:
-    """微信接入：走 wechatauto 的独立桥接进程（wx_bridge.py）。"""
-
-    enabled: bool = False
-    python: str = r"<wechatauto 目录>\.venv312\Scripts\python.exe"
-    script: str = r"<wechatauto 目录>\wx_bridge.py"
-    interval: float = 1.0  # 桥接轮询数据库的间隔（秒）
-    verify: bool = False  # 发送后回读数据库确认（微信写库是异步的，会慢）
-    echo_self: bool = False  # 把自己发的消息也回传（调试用）
-    allow_chats: list = field(default_factory=list)  # 只理这些会话，空=全部
-    deny_chats: list = field(default_factory=list)  # 这些会话一律不理
-    private_enabled: bool = True
-    group_enabled: bool = True
-    ignore_before: float = 0.0  # 忽略早于此时刻（unix 秒）的消息，避免开播时补课
-    log_file: str = "data/wx_bridge.log"
-    start_timeout: float = 150.0  # 等桥接报 ready 的上限（首启要解密数据库）
 
 
 @dataclass
@@ -363,8 +295,6 @@ class AppConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     admin: AdminConfig = field(default_factory=AdminConfig)
     autonomy: AutonomyConfig = field(default_factory=AutonomyConfig)
-    tts: TTSConfig = field(default_factory=TTSConfig)
-    wechat: WeChatConfig = field(default_factory=WeChatConfig)
     net: NetConfig = field(default_factory=NetConfig)
     stickers: StickersConfig = field(default_factory=StickersConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
@@ -391,8 +321,6 @@ class AppConfig:
             memory=_section(MemoryConfig, raw.get("memory")),
             admin=_section(AdminConfig, raw.get("admin")),
             autonomy=_section(AutonomyConfig, raw.get("autonomy")),
-            tts=_section(TTSConfig, raw.get("tts")),
-            wechat=_section(WeChatConfig, raw.get("wechat")),
             net=_section(NetConfig, raw.get("net")),
             stickers=_section(StickersConfig, raw.get("stickers")),
             tools=_section(ToolsConfig, raw.get("tools")),
@@ -439,10 +367,9 @@ class AppConfig:
         self.autonomy.interval_minutes = max(1.0, float(self.autonomy.interval_minutes or 45.0))
         self.autonomy.jitter = max(0.0, min(1.0, float(self.autonomy.jitter or 0.0)))
         self.autonomy.max_actions_per_hour = max(0, int(self.autonomy.max_actions_per_hour or 0))
+        self.autonomy.signature_interval_days = max(0.0, float(self.autonomy.signature_interval_days or 0))
+        self.autonomy.greet_interval_hours = max(0.0, float(self.autonomy.greet_interval_hours or 0))
         self.onebot.listen_path = self.onebot.listen_path or ""
-        for key in ("allow_chats", "deny_chats"):
-            setattr(self.wechat, key, [str(x) for x in (getattr(self.wechat, key) or [])])
-        self.wechat.interval = max(0.2, float(self.wechat.interval or 1.0))
         self.net.max_results = max(1, min(10, int(self.net.max_results or 5)))
         self.net.timeout = max(5.0, float(self.net.timeout or 20.0))
         self.net.max_page_chars = max(300, int(self.net.max_page_chars or 3000))

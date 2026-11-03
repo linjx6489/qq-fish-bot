@@ -38,12 +38,15 @@ class Autonomy:
         self.counters = {"acts": 0, "failed": 0, "skipped": 0, "manual": 0}
         self.last_action: dict | None = None
         self.pending_reason: str = ""
+        self._sig_at: float = 0.0  # 上次自己改签名的时间
 
     # ---------------------------------------------------------------- 生命周期
     async def start(self) -> None:
         if not self.cfg.enabled:
             log.info("自主活动：关闭（config.yaml 里 autonomy.enabled 打开即可）")
             return
+        record = await self.bot.mem.kv_get(KV_SIGNATURE)
+        self._sig_at = float(record.get("at") or 0.0) if isinstance(record, dict) else 0.0
         self._stopping = False
         self._task = asyncio.create_task(self._loop())
         log.info(
@@ -119,7 +122,7 @@ class Autonomy:
 
     def _available(self, action: str) -> bool:
         if action == "signature":
-            return self.cfg.allow_profile_edit
+            return self.cfg.allow_profile_edit and self._signature_due()
         if action == "nickname":
             return self.cfg.allow_profile_edit and self.cfg.allow_nickname_change
         if action == "chat":
@@ -129,6 +132,19 @@ class Autonomy:
         if action == "diary":
             return True
         return False
+
+    def _signature_due(self) -> bool:
+        """签名限流：`signature_interval_days` 天内只准她自己动一次。"""
+        days = float(getattr(self.cfg, "signature_interval_days", 0) or 0)
+        if days <= 0:
+            return True
+        return (time.time() - self._sig_at) >= days * 86400
+
+    def signature_wait_text(self) -> str:
+        left = self._sig_at + float(self.cfg.signature_interval_days or 0) * 86400 - time.time()
+        if not self._sig_at or left <= 0:
+            return ""
+        return f"签名还要 {left / 86400:.1f} 天才轮得到再改"
 
     def _pick_action(self) -> str | None:
         pool = [a for a in self.cfg.actions if self._available(a)]
@@ -219,6 +235,7 @@ class Autonomy:
             "set_qq_profile", {"nickname": nickname, "personal_note": text}
         )
         await self.bot.mem.kv_set(KV_SIGNATURE, {"text": text, "at": time.time()})
+        self._sig_at = time.time()
         return f"把个性签名改成「{text}」"
 
     async def _act_nickname(self) -> str | None:
@@ -347,6 +364,8 @@ class Autonomy:
             f"候选动作：{'、'.join(self.cfg.actions) or '无'}",
             f"已折腾 {self.counters['acts']} 次，跳过 {self.counters['skipped']} 次，失败 {self.counters['failed']} 次",
         ]
+        if wait := self.signature_wait_text():
+            lines.append(wait)
         if self._in_quiet_hours():
             lines.append("现在处于静默时段，暂时不动")
         if self.last_action:

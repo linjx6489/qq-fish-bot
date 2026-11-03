@@ -21,7 +21,6 @@ from .onebot import (
     OneBotOffline,
     build_reply_segments,
     image_segment,
-    record_segment,
 )
 from .persona import Persona
 from .skills import Skills
@@ -38,7 +37,6 @@ from .textutil import (
     strip_thinking,
 )
 from .tools import ToolBox, ToolError, parse_tool, split_partial_tool, tools_hint
-from .tts import TTS, TTSError
 from .vision import Vision, image_refs, is_image_url
 from .qqctl import QQControl, QQControlError, STATUS_CHOICES
 
@@ -63,7 +61,6 @@ class FishBot:
         self.llm = FishLLM(cfg.llm)
         self.persona = Persona(cfg.persona)
         self.autonomy = Autonomy(self, cfg.autonomy)
-        self.tts = TTS(cfg.tts, ROOT)
         self.web = Web(cfg.net)
         self.stickers = Stickers(cfg.stickers, ROOT)
         self.tools = ToolBox(cfg.tools, ROOT)
@@ -71,7 +68,6 @@ class FishBot:
         self.ctrl = QQControl(cfg.ctrl, ROOT)
         self.skills = Skills(cfg.skills, ROOT)
         self.transport: Any = None
-        self._voice_sessions: set[str] = set()
 
         self._locks: dict[str, asyncio.Lock] = {}
         self._last_reply: dict[str, float] = {}
@@ -80,6 +76,8 @@ class FishBot:
         self._sem = asyncio.Semaphore(max(1, cfg.behavior.global_concurrency))
         self._started_at = time.time()
         self._hb: asyncio.Task | None = None
+        self._greet: asyncio.Task | None = None
+        self._greet_at: float = 0.0
         self.counters = {"events": 0, "replies": 0, "llm_calls": 0, "skipped": 0, "errors": 0}
 
     # ================================================================ 生命周期
@@ -96,7 +94,6 @@ class FishBot:
         log.info("%s", self.web.status_text())
         log.info("%s", self.tools.status_text())
         log.info("%s", self.skills.status_text())
-        log.info("%s", self.tts.status_text())
         log.info("%s", self.vision.status_text())
         log.info("%s", self.ctrl.status_text())
         self.persona.load()
@@ -108,8 +105,21 @@ class FishBot:
         log.info("模型服务：%s —— %s", "可用" if ok else "不可达", detail)
         await self.autonomy.start()
         self._hb = asyncio.create_task(self._heartbeat(), name="heartbeat")
+        record = await self.mem.kv_get("greet:last")
+        self._greet_at = float(record.get("at") or 0.0) if isinstance(record, dict) else 0.0
+        hours = float(getattr(self.cfg.autonomy, "greet_interval_hours", 0) or 0)
+        if hours > 0:
+            self._greet = asyncio.create_task(self._greeter(), name="greeter")
+            log.info("定时招呼：每 %.0f 小时跟 %s 说一句", hours, "、".join(self._greet_targets()) or "（没配收件人）")
 
     async def close(self) -> None:
+        if self._greet is not None:
+            self._greet.cancel()
+            try:
+                await self._greet
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            self._greet = None
         if self._hb is not None:
             self._hb.cancel()
             try:
@@ -140,6 +150,97 @@ class FishBot:
                 log.debug("心跳写入失败：%s", exc)
             await asyncio.sleep(60)
 
+    # ------------------------------------------------------------ 定时招呼
+    def _greet_targets(self) -> list[str]:
+        """招呼发给谁：greet_targets 优先，空就用管理员名单。"""
+        raw = list(getattr(self.cfg.autonomy, "greet_targets", None) or []) or list(self.cfg.admin.users or [])
+        me = str(self.self_id or "")
+        return [s for s in (str(x).strip() for x in raw) if s and s != me]
+
+    def _greet_ready(self) -> bool:
+        hours = float(getattr(self.cfg.autonomy, "greet_interval_hours", 0) or 0)
+        if hours <= 0:
+            return False
+        return (time.time() - self._greet_at) >= hours * 3600
+
+    async def _greeter(self) -> None:
+        """每 greet_interval_hours 小时主动说一句；安静时段不打扰。"""
+        try:
+            await asyncio.sleep(120)  # 刚上线先安分两分钟
+        except asyncio.CancelledError:
+            raise
+        while True:
+            try:
+                if self._greet_ready() and self._greet_targets():
+                    if self.autonomy._in_quiet_hours():
+                        log.debug("定时招呼：安静时段，往后挪")
+                    else:
+                        text = await self._say_hello()
+                        if text:
+                            log.info("定时招呼：%s", text)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.warning("定时招呼出错：%s: %s", type(exc).__name__, exc)
+            await asyncio.sleep(300)
+
+    async def _say_hello(self) -> str | None:
+        """生一句问候并发给主人，发完记进记忆（她下次还记得说过）。"""
+        targets = self._greet_targets()
+        if not targets:
+            return None
+        transport = self.transport
+        if transport is None or not getattr(transport, "online", False):
+            return None
+        hour = time.localtime().tm_hour
+        if 5 <= hour < 11:
+            part = "早上"
+        elif 11 <= hour < 14:
+            part = "中午"
+        elif 14 <= hour < 18:
+            part = "下午"
+        elif 18 <= hour < 23:
+            part = "晚上"
+        else:
+            part = "夜里"
+        system = self.persona.system_prompt(
+            scene="private",
+            speaker="主人",
+            platform="QQ",
+            extra_note=(
+                f"现在是{part}。你要主动跟主人打个招呼 —— 不是回他，是你先开口。"
+                "一句话，口气跟平时一样：可以问他吃没吃、在忙什么，或者说说你刚在干嘛。"
+                "别客套、别用敬语、别分点，只输出这句话本身。"
+            ),
+            hunger=self._hunger(),
+            max_chars=self.cfg.persona.max_chars,
+        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "（现在是你的自由活动时间，你想起主人了）"},
+        ]
+        text = ""
+        try:
+            result = await self.llm.chat(messages)
+            if result.ok:
+                text = sanitize_output(result.text, self.cfg.persona.hard_max_chars)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("招呼生成失败：%s", exc)
+        if not text or text.strip() in ("[沉默]", "沉默", "（沉默）", "(沉默)"):
+            text = f"{part}好呀，主人。"
+        for uid in targets:
+            try:
+                await transport.send_private(uid, build_reply_segments(text))
+                await self.mem.add(f"private:{uid}", "assistant", text, name=self.persona.cfg.name)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("招呼发不出去（%s）：%s", uid, exc)
+        self._greet_at = time.time()
+        try:
+            await self.mem.kv_set("greet:last", {"at": self._greet_at, "text": text})
+        except Exception:  # noqa: BLE001
+            pass
+        return text
+
     def reload(self) -> None:
         """热重载 config.yaml 与人设文件。"""
         fresh = AppConfig.load(self.cfg_source)
@@ -148,7 +249,6 @@ class FishBot:
         self.cfg.behavior = fresh.behavior
         self.cfg.admin = fresh.admin
         self.cfg.autonomy = fresh.autonomy
-        self.cfg.tts = fresh.tts
         self.cfg.net = fresh.net
         self.cfg.stickers = fresh.stickers
         self.cfg.tools = fresh.tools
@@ -157,7 +257,6 @@ class FishBot:
         self.llm.cfg = fresh.llm
         self.persona.cfg = fresh.persona
         self.autonomy.cfg = fresh.autonomy
-        self.tts.cfg = fresh.tts
         self.web.cfg = fresh.net
         self.cfg.vision = fresh.vision
         self.vision.cfg = fresh.vision
@@ -410,8 +509,6 @@ class FishBot:
             "喂": self._cmd_feed,
             "玩": self._cmd_play,
             "play": self._cmd_play,
-            "语音": self._cmd_voice,
-            "voice": self._cmd_voice,
             "搜": self._cmd_search,
             "search": self._cmd_search,
             "查": self._cmd_search,
@@ -501,12 +598,11 @@ class FishBot:
             n_skill = len(self.skills.names())  # type: ignore[attr-defined]
         except Exception:
             n_skill = 0
-        voice = "语音：关着" if not getattr(self.tts, "enabled", False) else "发语音"
         return (
             "我能干的：聊天接梗、看气氛 · 看图（你发的图我真看得见，图里有啥、写了啥都能讲）· "
             "上网查、读网页 · 看屏幕、报机器状况 · 压记忆腾地方 · "
             f"贴表情包（{n_sticker} 张）· 借来的本事（{n_skill} 套）· "
-            "操控我自己的 QQ（昵称 / 签名 / 头像 / 在线状态 / 发说说 / 删说说 / 点赞）· " + voice + "。\n"
+            "操控我自己的 QQ（昵称 / 签名 / 头像 / 在线状态 / 发说说 / 删说说 / 点赞）。\n"
             "要动手的活儿直接跟我说，不用背命令：比如「换个头像」「把签名改成今天也想被投喂」"
             "「发条说说：今天天气不错」「给 987654321 点个赞」。"
         )
@@ -581,7 +677,6 @@ class FishBot:
             f"{prefix}状态 —— 本鲸还活着吗\n"
             f"{prefix}喂 —— 给本鲸一口 token\n"
             f"{prefix}玩 —— 让本鲸自己去玩一会儿 QQ\n"
-            f"{prefix}语音 —— 让本鲸用说的（{prefix}语音 说 你好呀）\n"
             f"{prefix}搜 关键词 —— 让本鲸上网查一下\n"
             f"{prefix}看 网址 —— 让本鲸读一下这个网页\n"
             f"{prefix}截图 —— 让本鲸看一眼屏幕\n"
@@ -784,37 +879,6 @@ class FishBot:
         self.reload()
         return f"配置已刷新（模型 {before} → {self.cfg.llm.model}），人设也重新吃了一遍~"
 
-    async def _cmd_voice(self, *, session, msg_type, target, user_id, args, privileged, **_) -> str:
-        if msg_type == "group" and not privileged:
-            return "群里要管理员才能让本鲸开口说话~"
-        if not self.tts.enabled:
-            return "语音功能没打开（config.yaml 里 tts.enabled 是 false）。"
-
-        arg = (args or "").strip()
-        head = arg.split()[0] if arg else ""
-        if head in ("说", "念", "say"):
-            line = arg[len(head):].strip()
-            if not line:
-                return "想让本鲸说什么？例如：/语音 说 你好呀~（语音现在是关着的）"
-            ok = await self._send_voice(msg_type, target, line, user_id=user_id)
-            if ok:
-                return f"念完了：{line}"
-            return f"说不出来…（{self.tts.last_error or '合成失败'}）"
-        if arg in ("开", "on", "打开"):
-            self._voice_sessions.add(session)
-        elif arg in ("关", "off", "关闭"):
-            self._voice_sessions.discard(session)
-        elif arg:
-            return f"看不懂「{arg}」。用法：/语音 [开|关|说 文本]"
-        elif session in self._voice_sessions:
-            self._voice_sessions.discard(session)
-        else:
-            self._voice_sessions.add(session)
-
-        if session in self._voice_sessions:
-            return f"好~接下来本鲸用说的。（{self.tts.status_text()}）"
-        return f"行，本鲸继续打字。（{self.tts.status_text()}）"
-
     async def _cmd_feed(self, *, session, user_id, **_) -> str:
         count = int(await self.mem.kv_get(f"fed:{user_id}", 0)) + 1
         await self.mem.kv_set(f"fed:{user_id}", count)
@@ -910,7 +974,7 @@ class FishBot:
 
     # ================================================================ 干活
     def _image_ok(self, target: str) -> bool:
-        """图片段只有 QQ 通道发得出去；微信桥接会把图片段丢掉。"""
+        """图片段发得出去吗（OneBot 通道支持）。"""
         checker = getattr(self.transport, "is_qq_target", None)
         if callable(checker):
             try:
@@ -972,7 +1036,8 @@ class FishBot:
         if not self.tools.allows("screenshot"):
             return "管理员没让本鲸看屏幕（tools.screenshot: false）。"
         if not self._image_ok(target):
-            return "本鲸能截，但微信那边发不了图，得在 QQ 里喊我。"
+            return "这个通道发不了图，本鲸截了也白截。"
+
         try:
             path = self.tools.screenshot()
         except ToolError as exc:
@@ -1276,8 +1341,7 @@ class FishBot:
         hard_max = self.cfg.persona.hard_max_chars
         at_user = user_id if (msg_type == "group" and self.cfg.behavior.reply_prefix_at) else None
         reply_to = str(ev.get("message_id") or "") if (msg_type == "group" and self.cfg.behavior.quote_reply) else None
-        voice = self._voice_wanted(f"{msg_type}:{target}")
-        use_stream = bool(self.cfg.llm.stream) and self.cfg.behavior.split_reply and not voice
+        use_stream = bool(self.cfg.llm.stream) and self.cfg.behavior.split_reply
         text: str | None = None
 
         try:
@@ -1292,11 +1356,7 @@ class FishBot:
                 else:
                     clean = sanitize_output(strip_thinking(result.text), hard_max)
                     if clean:
-                        spoke = False
-                        if voice:
-                            spoke = await self._send_voice(msg_type, target, clean, user_id=user_id)
-                        if not spoke:
-                            await self._send_text(msg_type, target, clean, ev=ev, at_user=at_user, reply_to=reply_to)
+                        await self._send_text(msg_type, target, clean, ev=ev, at_user=at_user, reply_to=reply_to)
                         text = clean
         except Exception as exc:  # noqa: BLE001
             self.counters["errors"] += 1
@@ -1476,65 +1536,6 @@ class FishBot:
         log.info("表情包已发：%s（标签=%s）", sticker.name, tag or "随机")
         return True
 
-    def _voice_wanted(self, session: str) -> bool:
-        """这一条回复要不要用语音发。"""
-        if not self.tts.enabled:
-            return False
-        # 会话名形如 "private:1234" / "group:xxx@chatroom"，尾巴就是发送目标
-        target = session.split(":", 1)[1] if ":" in session else session
-        checker = getattr(self.transport, "voice_ok_for", None)
-        if callable(checker):
-            try:
-                if not checker(target):
-                    return False
-            except Exception:
-                pass
-        mode = (self.cfg.tts.mode or "command").lower()
-        if mode == "off":
-            return False
-        if session in self._voice_sessions:
-            return True
-        if mode == "auto":
-            prob = max(0.0, min(1.0, float(self.cfg.tts.probability)))
-            return random.random() < prob
-        return False
-
-    async def _send_voice(self, msg_type: str, target: str, text: str, *, user_id: str) -> bool:
-        """合成并发一条语音；成功返回 True，失败让调用方退回文字。"""
-        if self.transport is None or not self.tts.enabled:
-            return False
-        kind = "group" if msg_type == "group" else "private"
-        try:
-            path = await self.tts.synth(text)
-        except TTSError as exc:
-            log.warning("语音合成失败：%s", exc)
-            return False
-        except Exception as exc:  # noqa: BLE001
-            log.warning("语音合成异常：%s: %s", type(exc).__name__, exc)
-            return False
-
-        segments: list[dict] = []
-        if msg_type == "group" and self.cfg.behavior.reply_prefix_at and user_id:
-            segments.append(at_segment(user_id))
-        segments.append(record_segment(path))
-        try:
-            await self.transport.send(kind, target, segments)
-        except OneBotOffline as exc:
-            self.counters["errors"] += 1
-            log.warning("语音发送失败：%s", exc)
-            return False
-        log.info("[%s] 语音 → %s", "群" if msg_type == "group" else "私聊", path.name)
-        if self.cfg.tts.send_text_along:
-            # 语音留给耳朵，文字留给赶时间的人；不带 @ 也不引用，免得屏幕上出现两份前缀
-            try:
-                await self.transport.send(kind, target, build_reply_segments(text))
-            except OneBotOffline as exc:
-                log.debug("语音附带的文字没发出去：%s", exc)
-            except Exception as exc:  # noqa: BLE001
-                log.debug("语音附带的文字没发出去：%s: %s", type(exc).__name__, exc)
-        return True
-
-    @staticmethod
     def _error_line() -> str:
         return random.choice(
             [
@@ -1552,7 +1553,6 @@ class FishBot:
             "sessions_cached": len(self._locks),
             "online": bool(getattr(self.transport, "online", False)),
             "autonomy": self.autonomy.stats(),
-            "tts": dict(self.tts.counters),
         }
 
 
@@ -1568,12 +1568,10 @@ def _is_silent(text: str) -> bool:
 
 
 # 这些是系统自带会话，名字里带「助手」也不是机器人，别误伤。
-# 微信的「文件传输助手」正是踩在这个坑上的。
 QQ_OWNER_ONLY = "这个只有主人能让我干（动的是我自己那个号）。"
 
 _SYSTEM_CHATS = (
-    "文件传输助手", "微信团队", "微信支付", "微信运动",
-    "订阅号消息", "服务通知", "折叠的群聊", "QQ团队", "QQ空间",
+    "文件传输助手", "订阅号消息", "服务通知", "折叠的群聊", "QQ团队", "QQ空间",
 )
 
 
@@ -1683,12 +1681,8 @@ def _natural_intent(text: str):
 
 
 def _platform_of(session: str) -> str:
-    """推断这条会话在哪个平台上：纯数字目标是 QQ，其余当微信。"""
-    target = session.split(":", 1)[1] if ":" in session else session
-    target = (target or "").strip()
-    if not target:
-        return "聊天"
-    return "QQ" if target.isdigit() else "微信"
+    """会话所在的平台（现在只有 QQ 一条通道，留这个函数是为了文案统一）。"""
+    return "QQ"
 
 
 # 像"需要上网查"的词。故意用粗判：宁可少查，也别把每条闲聊都拖慢十几秒。

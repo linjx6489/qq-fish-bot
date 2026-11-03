@@ -24,13 +24,13 @@ img{max-width:100%}
 </head>
 <body>
 <h1>鲸鲸 · QQ 自动回复机器人</h1>
-<p>一只<strong>会偷吃 token 的蓝色虎鲸娘</strong>，同时接进 QQ 和微信陪你聊天。</p>
+<p>一只<strong>会偷吃 token 的蓝色虎鲸娘</strong>，接进 QQ 陪你聊天。</p>
 <p>她叫「鲸鲸」——圆脸蓝瞳、蓝紫渐层长发、耳侧一对小鲸鱼鳍、深蓝色女仆装，<br />
 把 token 当脑力口粮，一边嘴上说着"本鲸只是路过"，一边把你的每句话都记进小账本。</p>
 <ul>
 <li>模型：<code>deepseek-v4.1-flash-free</code>，备选 <code>deepseek-v4.1-flash-1017</code>（OpenAI 兼容接口，默认指向本机 <code>http://127.0.0.1:8792/v1</code>）<br />
   —— 这个模型是老毛病：思考一大堆、正文常常是空的。代码里加了一层「思考回收」，会把话从思考里捞回来，见下文</li>
-<li>接入方式：<strong>QQ 走 OneBot v11</strong>（NapCat），<strong>微信走 wechatauto 桥接</strong>（不注入、不改微信文件）</li>
+<li>接入方式：<strong>QQ 走 OneBot v11</strong>（NapCat）</li>
 <li>两个通道共用同一套人设、记忆、命令、限流与自主活动</li>
 <li>依赖只有四个：<code>httpx</code>、<code>websockets</code>、<code>aiosqlite</code>、<code>PyYAML</code>，没有重框架</li>
 </ul>
@@ -84,14 +84,6 @@ img{max-width:100%}
 <tr>
 <td>私聊 / 群聊自动回复</td>
 <td>群里<strong>不用 @ 也接话</strong>（有人在问、在聊她时）；@ 她或叫她「鲸鲸」则一定接</td>
-</tr>
-<tr>
-<td><strong>双通道</strong></td>
-<td>同一时刻在 QQ 和微信上都在线，各自独立记忆，策略共用</td>
-</tr>
-<tr>
-<td>~~发语音~~</td>
-<td><strong>已关闭</strong>（<code>tts.enabled: false</code>）；想在本机开回来见下文</td>
 </tr>
 <tr>
 <td>随机插话</td>
@@ -173,9 +165,6 @@ img{max-width:100%}
 │   ├── stickers.py     表情包：清单加载、标记解析、挑图、冷却与限流
 │   ├── tools.py        干活：截图、系统信息、标记解析与限流
 │   ├── onebot.py       OneBot v11 正/反向 WebSocket 客户端（QQ）
-│   ├── wechat.py       微信通道：拉起 wx_bridge.py 子进程、翻事件、发消息
-│   ├── router.py       通道路由：数字目标走 QQ，其余走微信
-│   ├── tts.py          语音合成（edge-tts 首选，SAPI 兜底）
 │   ├── persona.py      人设拼接（平台、状态、饥饿度、群聊环境、临时提醒）
 │   ├── textutil.py     CQ 码解析、输出清洗、emoji 过滤、分句、代理对清洗
 │   ├── vision.py       识图：取图（本地 / OneBot get_image / HTTPS）+ 问视觉模型
@@ -185,12 +174,11 @@ img{max-width:100%}
 ├── personas/jingjing.md   人设正文 ← 想改性格就改这个文件
 ├── assets/character.md 角色形象设定 + 出图提示词
 ├── assets/stickers/    表情包素材 + manifest.json
-├── watchdog.py         看门狗：体检 QQ / 微信 / 机器人，按需修复并报备
+├── watchdog.py         看门狗：体检 QQ 通道与机器人，按需修复并报备
 ├── tests/
 │   ├── mock_openai.py  假模型服务（含 SSE 流式）
 │   ├── mock_onebot.py  假 QQ 端（正向 WS 服务端）
 │   └── test_e2e.py     端到端测试（20 项，全绿）
-├── boot_all.bat        一键全启：QQ + NapCat + 机器人 + 微信桥接
 ├── boot_napcat.bat     只拉 NapCat 那一段（看门狗修 QQ 通道时用）
 ├── start_napcat_wmi.ps1  用 WMI 以「无控制台」方式派生 NapCat，关掉窗口不会带走它
 ├── run_bot.bat         只拉机器人（看门狗修机器人时用，自动清干净代理变量）
@@ -276,9 +264,7 @@ python -m pip install -r requirements.txt
 </tr>
 </tbody>
 </table>
-<p><strong>一键全启：双击项目根目录的 <code>boot_all.bat</code></strong>（QQ + NapCat + 机器人 + 微信桥接一次到位）</p>
 <p>它会依次：杀掉旧 QQ → 用 NapCat 拉起 QQ 并快速登录小号 → 等 3001 端口（最多约 75 秒）<br />
-→ 启动 fishbot（含微信桥接）。日志写在 <code>data\boot.log</code>。<br />
 只想要 NapCat 那一段（看门狗修 QQ 通道时用的就是它）就双击 <code>boot_napcat.bat</code>。</p>
 <p><strong>手动启动（等价于上面三步）</strong></p>
 <pre><code class="language-bat">:: 1. 关掉旧 QQ（NapCat 注入必须在 QQ 未运行时进行）
@@ -400,11 +386,6 @@ cd /d &lt;仓库目录&gt;
 <td><code>/玩</code></td>
 <td>让本鲸立刻自己去玩一次 QQ（不等定时）</td>
 <td>管理员</td>
-</tr>
-<tr>
-<td><code>/语音</code></td>
-<td>切换语音回复：不带参数=开关，<code>说 &lt;内容&gt;</code>=念一句，<code>关</code>=闭嘴打字（<strong>默认已关</strong>：<code>tts.enabled: false</code>）</td>
-<td>所有人</td>
 </tr>
 <tr>
 <td><code>/搜 关键词</code></td>
@@ -667,11 +648,6 @@ cd /d &lt;仓库目录&gt;
 </tr>
 </thead>
 <tbody>
-<tr>
-<td>截图</td>
-<td><code>[[工具:截图]]</code></td>
-<td>Pillow <code>ImageGrab</code> 抓当前屏幕，缩放后发成图片（<strong>只有 QQ 通道发得出去</strong>，微信那边只收文字）</td>
-</tr>
 <tr>
 <td>系统信息</td>
 <td><code>[[工具:系统]]</code></td>
@@ -1198,8 +1174,7 @@ FISHBOT_LOG_LEVEL       日志级别
    以前她开口闭口都是白饭，现在这条写进了硬性规则第 7 条。</li>
 <li><strong>硬性规则</strong> —— 只输出台词、不承认自己是 AI、讲事情要有条理、「白饭」不是台词、<br />
    不想说话就输出 <code>[沉默]</code></li>
-<li>剩下几块写她的本事：表情包标记、截图/系统信息/压缩上下文、借来的两套本事（恋爱军师、女娲造人）、<br />
-   怎么看她收到的图、群里怎么接话、被念成语音的时候该怎么写</li>
+<li>剩下几块写她的本事：表情包标记、截图/系统信息/压缩上下文、借来的两套本事（恋爱军师、女娲造人）、</li>
 </ol>
 <p>改完在 QQ 里发一句 <code>/重载</code> 就行，不用重启进程。<br />
 机器人每次拼接 system prompt 时会额外塞进去：当前场景（私聊/群聊）、对方昵称、<br />
@@ -1249,243 +1224,6 @@ QQ 端（正向 WS 服务端），再用子进程把机器人真跑起来，覆�
 ⑪  进程全程存活                    ⑪b 假模型收到多次调用
 </code></pre>
 <hr />
-<h2>让她开口说话（语音）</h2>
-<blockquote>
-<p><strong>现在是关着的</strong>：<code>config.yaml</code> 里 <code>tts.enabled: false</code>，她只打字，合成的临时音频也清空了。<br />
-下面这套东西仍然在仓库里，哪天想在本地开回来：把 <code>enabled</code> 改回 <code>true</code>、重启即可<br />
-（edge 引擎不需要额外装东西；<code>rvc</code> 那条路要自备音色模型和一份显存/内存预算）。</p>
-</blockquote>
-<p>她默认会自己开口：<strong>大约每三条回复里有一条是语音</strong>，其余还是打字。想固定下来就用命令。</p>
-<table>
-<thead>
-<tr>
-<th>命令</th>
-<th>作用</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>/语音</code></td>
-<td>切换本会话「只用说的 / 只打字」，并回报当前状态</td>
-</tr>
-<tr>
-<td><code>/语音 开</code> / <code>/语音 关</code></td>
-<td>明确打开 / 关掉本会话的语音</td>
-</tr>
-<tr>
-<td><code>/语音 说 文本</code></td>
-<td>立刻把这句话念出来（不用等她生成）</td>
-</tr>
-</tbody>
-</table>
-<p><strong>这条链路是怎么走通的</strong></p>
-<ol>
-<li><code>fishbot/tts.py</code> 用 <strong>edge-tts</strong> 合成 mp3（默认音色 <code>zh-CN-XiaoxiaoNeural</code>，是按录音量出来的音高挑的；早先写的 <code>zh-CN-XiaobeiNeural</code> 这个名字其实不存在，见下）</li>
-<li>通过 OneBot 发一个 <code>{"type":"record","data":{"file":"file:///…mp3"}}</code> 消息段</li>
-<li><strong>NapCat 自带 ffmpeg 插件</strong>把它转成 QQ 要的 silk —— 系统里不需要装 ffmpeg</li>
-</ol>
-<p><strong>音色：标准普通话，不要方言</strong></p>
-<p>参考录音：<code>&lt;录音目录&gt;\录音机-20261020-2003.m4a</code>（13.95 秒），<br />
-拆成 16k 单声道逐帧自相关求基频，中位基频 <strong>258.1 Hz</strong>。</p>
-<p><strong>这里踩过一个坑，值得记下来</strong>：一开始配置里写的是 <code>zh-CN-XiaobeiNeural</code>，<br />
-看着很像 Azure 的命名规范，其实<strong>这个名字根本不存在</strong>。Edge 服务端不会报错，<br />
-它会拿这串名字去模糊匹配，最后落到 <code>zh-CN-liaoning-XiaobeiNeural</code> ——<br />
-<strong>辽宁东北话</strong>音色（服务端给的标签就是 <code>Dialect</code>）。所以那阵子她说话一股地方口音。</p>
-<p>证据：同一段文本、同一组参数，两个名字产出的音频<strong>字节完全一样</strong>。</p>
-<table>
-<thead>
-<tr>
-<th>写进配置的音色</th>
-<th>实际生效</th>
-<th>音频 sha256（前 16 位）</th>
-<th>字节</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>zh-CN-XiaobeiNeural</code>（不存在）</td>
-<td>辽宁话</td>
-<td><code>ef1c1fd71af1ec89</code></td>
-<td>40752</td>
-</tr>
-<tr>
-<td><code>zh-CN-liaoning-XiaobeiNeural</code></td>
-<td>辽宁话</td>
-<td><code>ef1c1fd71af1ec89</code></td>
-<td>40752</td>
-</tr>
-</tbody>
-</table>
-<p>同类陷阱还有 <code>zh-CN-XiaoniNeural</code> → 陕西话。</p>
-<p>所以现在用 <strong><code>zh-CN-XiaoxiaoNeural</code></strong>（标准普通话，标签 Warm，约 254 Hz），<br />
-靠 <code>pitch: "+4Hz"</code> 补到接近录音的 258 Hz。<code>fishbot/tts.py</code> 里加了守卫：<br />
-合成前先拉真实音色列表对一遍，名字不在列表里、或者命中方言关键字，<br />
-就自动换成 <code>zh-CN-XiaoxiaoNeural</code> 并打一条 <code>WARNING</code>，不让服务端再悄悄糊弄过去。</p>
-<p><strong>把语速压下来、把抖动捏死</strong></p>
-<table>
-<thead>
-<tr>
-<th>项</th>
-<th>之前</th>
-<th>现在</th>
-<th>为什么</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>voice</code></td>
-<td>zh-CN-XiaoxiaoNeural</td>
-<td><code>zh-CN-XiaoyiNeural</code></td>
-<td>小艺更年轻、更甜，接近录音那个调</td>
-</tr>
-<tr>
-<td><code>rate</code></td>
-<td>+6%</td>
-<td><code>-14%</code></td>
-<td>挑一个快的音色再放慢，比硬挑慢音色自然（4.43 → 3.44 字/秒）</td>
-</tr>
-<tr>
-<td><code>pitch</code></td>
-<td>+4Hz</td>
-<td><code>-16Hz</code></td>
-<td>压到 280 Hz 附近，贴近录音的 258 Hz</td>
-</tr>
-<tr>
-<td><code>rate_jitter</code> / <code>pitch_jitter</code></td>
-<td>3 / 2</td>
-<td><code>2 / 0</code></td>
-<td>音高一点都不抖 —— 随机抖动是「机器感」最大的来源</td>
-</tr>
-</tbody>
-</table>
-<p>情绪带来的起伏仍然保留（<code>MOOD_DELTA</code>：激动 +10% / +12 Hz，敷衍 −12% / −9 Hz），<br />
-只是那些一眼假的随机晃动被拿掉了。</p>
-<p><strong>一次合成一条，不要碎</strong></p>
-<p>以前是逐句合成，每句都重新掷一次抖动，听着像几个人轮流说话；超过 <code>max_chars</code> 还会直接退回打字，<br />
-于是「一会儿说话一会儿打字」。现在 <code>TTS.synth()</code> 给整段话只算一次语速/音高，<br />
-超长才按标点切段，段与段之间用 ffmpeg 的 concat demuxer 拼回<strong>一条</strong> mp3：</p>
-<table>
-<thead>
-<tr>
-<th>输入长度</th>
-<th>结果</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>100 字</td>
-<td>一条 20.18 s（121 KB）</td>
-</tr>
-<tr>
-<td>300 字</td>
-<td>一条 59.59 s（358 KB），分 2 段拼成</td>
-</tr>
-</tbody>
-</table>
-<p>合成前的 <code>clean_for_speech()</code> 还会把不适合念的东西洗掉：括号旁白换成逗号（不断句）、<br />
-颜文字和 emoji 直接删、连续感叹号/省略号压掉、中文之间的空格去掉（否则会念出停顿）。<br />
-<code>~</code> 特意保留 —— 那是她撒娇的地方。</p>
-<p><strong>没有做音色克隆</strong>：本机只有一块 2048 MB 的集显，模型代理上<br />
-<code>/v1/audio/speech</code>、<code>/v1/audio/tts</code>、<code>/v1/voice/clone</code> 全是 404 / 501，<br />
-所以「合成她的声音」实际是<strong>按录音的音高挑一个最接近的标准音色，再把语速语调调过去</strong>。</p>
-<p>NapCat 日志里能直接看到：</p>
-<pre><code>语音文件C:/…/voice-20261019-211405-2096d7.mp3需要转换成silk
-语音文件已就绪: C:\Users\&lt;你&gt;\Documents\Tencent Files\NapCat\temp\&lt;uuid&gt; 时长: 4.4
-发送 -&gt; 私聊 (987654321) [语音 4s]
-</code></pre>
-<p><strong>配置（<code>config.yaml</code> 的 <code>tts</code> 段）</strong></p>
-<table>
-<thead>
-<tr>
-<th>项</th>
-<th>默认</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>enabled</code></td>
-<td>false</td>
-<td>语音总开关（当前关闭）</td>
-</tr>
-<tr>
-<td><code>engine</code></td>
-<td>edge</td>
-<td><code>edge</code>=联网神经网络音色；<code>sapi</code>=系统离线语音；<code>auto</code>=先 edge 后 sapi</td>
-</tr>
-<tr>
-<td><code>voice</code></td>
-<td>zh-CN-XiaoyiNeural</td>
-<td>edge 音色（名字不存在或带方言会<strong>自动换成</strong> zh-CN-XiaoxiaoNeural）</td>
-</tr>
-<tr>
-<td><code>sapi_voice</code></td>
-<td>Microsoft Huihui Desktop</td>
-<td>离线兜底音色</td>
-</tr>
-<tr>
-<td><code>rate</code> / <code>volume</code> / <code>pitch</code></td>
-<td>-14% / +0% / -16Hz</td>
-<td>语速、音量、音调</td>
-</tr>
-<tr>
-<td><code>lively</code></td>
-<td>true</td>
-<td>每次合成在基础值上再抖一点</td>
-</tr>
-<tr>
-<td><code>rate_jitter</code> / <code>pitch_jitter</code></td>
-<td>2 / 0</td>
-<td>轻微抖动（音高别抖，一抖就显机器）</td>
-</tr>
-<tr>
-<td><code>mode</code></td>
-<td>auto</td>
-<td><code>off</code>=永不发；<code>command</code>=只有 <code>/语音 开</code> 过才发；<code>auto</code>=按概率自动发</td>
-</tr>
-<tr>
-<td><code>probability</code></td>
-<td>0.35</td>
-<td>auto 模式下每条回复转语音的概率</td>
-</tr>
-<tr>
-<td><code>max_chars</code></td>
-<td>220</td>
-<td>一条语音的朗读上限；超了自动切段再拼回一条（不是「超长就改成打字」）</td>
-</tr>
-<tr>
-<td><code>ffmpeg</code></td>
-<td>空=自动找</td>
-<td>分段拼接用；本机指向 imageio_ffmpeg 自带的 ffmpeg.exe（PATH 里没有 ffmpeg）</td>
-</tr>
-<tr>
-<td><code>send_text_along</code></td>
-<td>false</td>
-<td>发语音时是否再补一份文字（默认不补：语音就只发语音）</td>
-</tr>
-<tr>
-<td><code>dir</code> / <code>keep_files</code></td>
-<td>data/voice / 60</td>
-<td>音频目录与保留条数</td>
-</tr>
-</tbody>
-</table>
-<p><strong>几个坑</strong></p>
-<ul>
-<li>合成或发送失败会<strong>自动退回文字</strong>，不会因为语音挂了就不理人</li>
-<li>edge-tts 需要联网；断网就把 <code>engine</code> 改成 <code>sapi</code>，用系统音色离线合成（本机有 Huihui / Yaoyao / Kangkang）</li>
-<li>合成前会临时清掉 <code>http_proxy</code> / <code>no_proxy</code> 等环境变量——本机这几个变量是坏的（大小写冲突 + 端口畸形），aiohttp 会读它们然后连不上</li>
-<li>超长回复<strong>不会</strong>退回打字：先切段合成，再用 ffmpeg 拼成一条；只有在找不到 ffmpeg 时才退回文字</li>
-<li>想要「音源」的话，freesound.org 这类音效库帮不上——它主要是环境音/拟音，APIv2 还要 token</li>
-</ul>
-<p><strong>关于 freesound.org</strong></p>
-<p>试过了，它帮不上「合成她的声音」这件事：</p>
-<ul>
-<li>freesound 是<strong>音效库</strong>（气泡声、水声、UI 提示音那类），不含可用的中文语音素材；</li>
-<li>想批量取素材得走 APIv2，<strong>要注册申请 token</strong>；不注册只能在搜索页里抠公开的 preview mp3；</li>
-<li>已顺手抓了两个备用音效放在 <code>assets/sfx/</code>（<code>bubble.mp3</code> 气泡、<code>cute_pop.mp3</code> 提示音，带 <code>manifest.json</code>），目前<strong>没有接到任何动作上</strong>，只是备着。</li>
-</ul>
-<p>真正把音色对上录音的做法见上面那张基频对照表 —— 靠挑音色 + 调语速音高，不是靠素材拼接。</p>
 <h2>常开与自愈（看门狗）</h2>
 <p>想让她 24 小时在线，光"启动一次"是不够的——实测过夜 7 小时，QQ 被腾讯踢下线后<br />
 NapCat 只重启了 Worker、<strong>OneBot 的 3001 端口再没回来</strong>，而机器人只会傻傻重连。<br />
@@ -1522,11 +1260,6 @@ powercfg /change disk-timeout-ac 0
 <td>跑 <code>boot_napcat.bat</code>：拉起独立版 NapCat（不碰你的 QQ）→ 等端口</td>
 </tr>
 <tr>
-<td>微信通道</td>
-<td>有 <code>Weixin.exe</code> 进程</td>
-<td>拉起 <code>C:\Program Files\Tencent\Weixin\Weixin.exe</code></td>
-</tr>
-<tr>
 <td>机器人本体</td>
 <td><code>data/heartbeat</code> 文件比 300 秒新</td>
 <td>跑 <code>run_bot.bat</code>：<code>.venv\Scripts\python.exe -m fishbot</code></td>
@@ -1556,8 +1289,7 @@ schtasks /change /tn FishBotWatchdog /enable     :: 恢复
 <pre><code class="language-bat">cd /d &lt;仓库目录&gt;
 .venv\Scripts\python.exe watchdog.py --dry-run
 </code></pre>
-<p><strong>想手动接管时：双击 <code>stop_bot.bat</code></strong> —— 它会停掉机器人和微信桥接，并把看门狗任务暂停<br />
-（<strong>不动 NapCat 和你的 QQ/微信</strong>）。重新开就双击 <code>boot_all.bat</code>。</p>
+<p>（<strong>不动 NapCat 和你的 QQ</strong>）。重新开就双击 <code>boot_all.bat</code>。</p>
 <hr />
 <h2>故障排查</h2>
 <table>
@@ -1636,28 +1368,13 @@ schtasks /change /tn FishBotWatchdog /enable     :: 恢复
 <td>想改 NapCat 的网络/端口</td>
 <td>改 <code>&lt;NapCat 目录&gt;\shell\config\onebot11_&lt;QQ号&gt;.json</code>，<strong>必须重启 NapCat</strong> 才生效；WebUI <a href="http://127.0.0.1:6099">http://127.0.0.1:6099</a> 也能改</td>
 </tr>
-<tr>
-<td>微信那边没动静</td>
-<td>先看 <code>data/wx_bridge.log</code>；桥接活着但收不到，多半是微信自己掉线了（微信窗口停在登录页）——手动登一下即可</td>
-</tr>
-<tr>
-<td>她在微信里说得像在 QQ</td>
-<td>平台名是按会话目标推的（数字 → QQ，其余 → 微信）。只在目标编号异常时才会认错</td>
-</tr>
-<tr>
-<td>想彻底关掉微信通道</td>
-<td><code>config.yaml</code> 里 <code>wechat.enabled: false</code>，再 <code>/重载</code></td>
-</tr>
 </tbody>
 </table>
 <hr />
 <h2>已知限制</h2>
 <ul>
-<li>图片会真的看（<code>vision</code>），但只描述、不做精细活：认字、数数偶尔出错；语音仍是占位提示</li>
 <li>群里的「接不接话」靠启发式判断（问句、带着「你 / 她」），偶尔会误判：要么接得勤，要么漏接</li>
-<li>微信侧只支持<strong>文本</strong>往回收（语音只发 QQ）</li>
 <li>模型服务 <code>127.0.0.1:8792</code> 是本机回环，<strong>换到别的机器上要另配一个公网可用的模型 API</strong></li>
-<li>微信通道依赖 <code>wechatauto</code> 对微信界面的定位，<strong>微信小版本更新后可能需要重新校准</strong></li>
 <li>没有 Web 管理后台，管理靠命令与配置文件</li>
 <li>单进程设计，没做多实例共享记忆</li>
 <li>主模型被限流、或只思考不吐正文时：先从思考里回收一次 → 再沿 <code>llm.fallback_models</code> 换人 → 整条链路都不行她才回一句兜底话</li>

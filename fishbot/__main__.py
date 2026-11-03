@@ -12,8 +12,6 @@ from .bot import FishBot
 from .config import ROOT, AppConfig
 from .console import ConsoleTransport
 from .onebot import OneBotClient
-from .router import TransportRouter
-from .wechat import WeChatTransport
 
 BANNER = r"""
    ∧___∧      鲸鲸 · QQ 自动回复机器人
@@ -84,17 +82,13 @@ async def amain(args: argparse.Namespace) -> int:
     if simulate:
         bot.attach(ConsoleTransport(self_id=args.self_id))
     else:
-        qq = OneBotClient(cfg.onebot, bot.on_event)
-        wx = WeChatTransport(cfg.wechat, bot.on_event) if cfg.wechat.enabled else None
-        bot.attach(TransportRouter(qq=qq, wechat=wx))
+        bot.attach(OneBotClient(cfg.onebot, bot.on_event))
 
     await bot.start()
     if not simulate:
         mode = "正向" if cfg.onebot.mode == "forward" else "反向"
         target = cfg.onebot.ws_url if cfg.onebot.mode == "forward" else f"{cfg.onebot.listen_host}:{cfg.onebot.listen_port}"
         print(f"已接入 {mode} WebSocket：{target}")
-        if cfg.wechat.enabled:
-            print(f"已接入微信桥接：{cfg.wechat.script}")
         print(f"模型：{cfg.llm.model} @ {cfg.llm.base_url}")
         print("Ctrl+C 退出\n")
 

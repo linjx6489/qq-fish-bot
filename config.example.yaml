@@ -92,6 +92,9 @@ autonomy:
   min_idle_minutes: 20         # 最近这么久内有人跟她说话，就先安分
   follow_up_after_hours: 3     # 自己上句没人接，隔这么久才允许回访
   max_tokens: 200              # 自主活动内部生成的上限
+  signature_interval_days: 15  # 签名限流：这么多天内只准她自己动一次
+  greet_interval_hours: 12     # 每隔这么久主动跟你打个招呼，0=关
+  greet_targets: ["987654321"]  # 招呼发给谁，空=发管理员名单
 
 # 动作说明：
 #   signature —— 改 QQ 个性签名（不会动昵称）
@@ -99,69 +102,6 @@ autonomy:
 #   diary     —— 写一句心情记录，之后聊天时她会自己想起来
 #   chat      —— 主动私聊 proactive_private_allow 里的人
 #   group     —— 在 proactive_group_allow 的群里冒泡
-
-# ---------- 语音 ----------
-# 音色踩过的三个坑，都写在这儿，别再犯：
-#   1) zh-CN-XiaobeiNeural 这个名字根本不存在，服务端把它模糊匹配成
-#      zh-CN-liaoning-XiaobeiNeural —— 辽宁方言音色（标签 Dialect），所以一股东北味儿；
-#   2) zh-CN-XiaoniNeural 同理，会变成陕西话；
-#   3) 真正的可选项只有 XiaoxiaoNeural（温柔，偏播报）与 XiaoyiNeural（活泼、年轻、偏高）。
-# 现在用 XiaoyiNeural 压音高：够甜，又不至于像播音员。
-tts:
-  enabled: false
-  engine: edge                # edge=普通合成（默认：快、不吃内存）/ rvc=换成她的音色（要先起 _voice_engine\rvc_server.py，很吃内存）/ sapi=系统语音
-  voice: zh-CN-XiaoyiNeural  # 甜、年轻；方言名会被代码里的守卫换掉
-  sapi_voice: Microsoft Huihui Desktop
-  rate: "+16%"  # 慢一点才连得起来（原来 +6%/+12% 听着像在赶稿）
-  volume: "+0%"
-  pitch: "+16Hz"  # Xiaoyi 原生约 296Hz，压到 280Hz 左右：甜但不尖
-  lively: true                 # 每条回复之间微调一下语速，别每次都一模一样
-  rate_jitter: 2  # 语速随机浮动 ±2%
-  pitch_jitter: 0  # 音高不要抖：一抖就像好几个人在接话（人机感主因）
-  mode: auto                   # off=永不 | command=只有 /语音 开过才发 | auto=按概率自动发
-  probability: 0.35            # auto 模式下每条回复转语音的概率
-  max_chars: 220               # 超过这个长度才分段；分段后会用 ffmpeg 拼成一条，别让它变成几条语音
-  send_text_along: false
-  # 音色克隆（engine: clone 时用；先跑 _voice_engine\server.py）
-  clone_url: http://127.0.0.1:8799
-  clone_timeout: 300.0
-  clone_speed: 1.0
-  clone_max_chars: 60  # 超过这个字数的句子不克隆（CPU 上慢），交给 edge
-  rvc_url: http://127.0.0.1:8799    # 音色转换服务（engine: rvc 时用）
-  rvc_pitch: 0                      # 半音，把音高顶到目标
-  rvc_timeout: 300                  # 转换一次最多等多久
-  rvc_fallback: true                # 服务挂了就退回纯 edge
-  rvc_protect: 0.5            # 0~1，越大吐字越清楚（辅音保留原样）
-  rvc_filter_radius: 5        # 越大声调越平；太小会抖，太大没感情
-  rvc_rms_mix: 0.15           # 越小音量起伏越跟着源语音，越有感情
-  rvc_idle_seconds: 300       # 语音引擎闲着多久就自动关（省内存）
-  rvc_boot_timeout: 240       # 引擎按需启动时最多等多少秒
-  rvc_min_free_mb: 250        # 可用内存低于这个数就不用引擎，直接 edge
-  rvc_max_chars: 80                 # 超过这个字数不转换
-  rvc_engine_dir: <音色转换引擎目录>   # 引擎目录（里面要有 .venv 与 rvc_server.py；不用 rvc 就不管它）
-  rvc_model: <音色转换引擎目录>\rvc\<模型名>.pth   # RVC 模型文件；不用 rvc 就不管它
-  rvc_threads: 2                   # 引擎 torch 线程数；内存小，别开大
-  clone_fallback: true         # 音色转换失败就退回纯 edge 的声音
-  dir: data/voice              # 音频临时目录
-  keep_files: 60               # 只保留最近这么多条音频
-  timeout: 30                  # 单次合成超时（秒）
-  ffmpeg: ""                   # 长句拼接用；留空则自动找（装了 imageio-ffmpeg 也能自愈）
-# ---------- 微信（走 wechatauto 桥接进程） ----------
-# 需要另一个 Python 3.12 环境装 wechatauto，见 README「接入微信」。
-wechat:
-  enabled: false               # 要用微信就改成 true
-  python: D:\path\to\wechatauto\.venv312\Scripts\python.exe
-  script: D:\path\to\wx_bridge.py
-  interval: 1                  # 轮询微信数据库的间隔（秒）
-  verify: false                # 发送后回读数据库确认（慢 8 秒，一般不必要）
-  echo_self: false             # 把自己发的消息也回传（调试用）
-  private_enabled: true
-  group_enabled: true
-  allow_chats: []              # 只理这些会话（昵称 / wxid / 群名），空 = 全部
-  deny_chats: []               # 这些会话一律不理
-  ignore_before: 0             # 忽略早于该 unix 秒的消息
-  log_file: data/wx_bridge.log
-  start_timeout: 150
 
 # ---------- 联网 ----------
 net:

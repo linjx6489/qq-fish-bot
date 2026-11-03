@@ -33,8 +33,6 @@ if not exist "%BOT_DIR%\.venv\Scripts\python.exe" (
 )
 echo [%date% %time%] starting fishbot >> "%BOOTLOG%"
 cd /d "%BOT_DIR%"
-rem 音色克隆服务已弃用（RVC 音色路线回退，现在用 edge 音色），
-rem start_voice_engine.bat 已改成一运行就退出的占位脚本，不再调用。
 start "fishbot" /min cmd /c ".venv\Scripts\python.exe -m fishbot >> fishbot.log 2>&1"
 echo [%date% %time%] boot_all done >> "%BOOTLOG%"
 exit /b 0

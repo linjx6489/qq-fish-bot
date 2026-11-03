@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 """鲸鲸 · 看门狗
 
-每 12 小时被计划任务唤醒一次，检查三条线：
+每 12 小时被计划任务唤醒一次，检查两条线：
 
   1. QQ 通道  —— NapCat 的 OneBot WebSocket（127.0.0.1:3001 有没有在听）
-  2. 微信通道 —— Weixin.exe 进程在不在
-  3. 机器人   —— data/heartbeat 有没有在更新（进程在 ≠ 没卡死）
+  2. 机器人   —— data/heartbeat 有没有在更新（进程在 ≠ 没卡死）
+
+（微信通道与音色引擎已按主人要求删除，不再体检。）
 
 哪条断了就按对应姿势拉起来，把结果写进 data/watchdog.log；
 修完如果 QQ 通着，就自动给主人发条私聊报备一声。
@@ -34,11 +35,9 @@ STATE_FILE = DATA / "watchdog_state.json"
 HEARTBEAT = DATA / "heartbeat"
 
 QQ_EXE = Path(r"C:\Program Files\Tencent\QQNT\QQ.exe")
-WEIXIN_EXE = Path(r"C:\Program Files\Tencent\Weixin\Weixin.exe")
 BOOT_QQ_BAT = ROOT / "boot_qq.bat"
 RUN_BOT_BAT = ROOT / "run_bot.bat"
 BOT_PY = ROOT / ".venv" / "Scripts" / "python.exe"
-START_ENGINE_BAT = ROOT / "start_voice_engine.bat"
 
 # ---- 独立版 NapCat（2026-10-23 起）：自带 QQ 运行时，不再注入用户的 QQ 客户端 ----
 # 背景：旧方案（NapCatWinBootMain 注入 C:\Program Files\Tencent\QQNT\QQ.exe）自
@@ -49,7 +48,6 @@ NAPCAT_NODE = NAPCAT_DIR / "node.exe"
 NAPCAT_INDEX = NAPCAT_DIR / "index.js"
 NAPCAT_LOG = DATA / "napcat.log"
 BOT_UIN = "123456789"  # 机器人小号（快速登录用）
-VOICE_ENGINE_PORT = 8799  # 音色克隆服务（engine: clone 时才探它）
 
 ONEBOT_PORT = 3001
 OWNER_QQ = "987654321"  # 主人，报备用
@@ -213,20 +211,6 @@ def fix_qq() -> bool:
     return listening(ONEBOT_PORT)
 
 
-def fix_wechat() -> bool:
-    """把微信拉起来（登录态一般还在；要是停在登录页得人工点一下）。"""
-    if not WEIXIN_EXE.exists():
-        log.error("找不到微信：%s", WEIXIN_EXE)
-        return False
-    log.info("修复微信通道：启动 %s", WEIXIN_EXE)
-    _wmi_create(f'"{WEIXIN_EXE}"')
-    for _ in range(15):
-        time.sleep(4)
-        if procs_named("Weixin.exe"):
-            return True
-    return procs_named("Weixin.exe") > 0
-
-
 def fix_bot() -> bool:
     """重启机器人本体（同样走 WMI，否则会被计划任务连坐）。"""
     if not BOT_PY.exists():
@@ -240,15 +224,6 @@ def fix_bot() -> bool:
 
 
 # ---------------------------------------------------------------- 报备
-def fix_engine() -> bool:
-    """把音色克隆服务拉起来。它挂了不致命（TTS 会自动退回 edge），但音色就没了。"""
-    if not START_ENGINE_BAT.exists():
-        log.error("找不到 start_voice_engine.bat：%s", START_ENGINE_BAT)
-        return False
-    log.info("修复音色克隆服务：WMI 派生 start_voice_engine.bat")
-    return _wmi_create(f'cmd.exe /c "{START_ENGINE_BAT}"', ROOT)
-
-
 def notify(text: str) -> None:
     """通过 OneBot 给主人发一条私聊；失败就只记日志。"""
     try:
@@ -287,35 +262,6 @@ def notify(text: str) -> None:
 
 
 # ---------------------------------------------------------------- 主流程
-def wechat_enabled() -> bool:
-    """配置里 wechat.enabled 关掉时，看门狗就不该去管微信死活。"""
-    cfg = ROOT / "config.yaml"
-    try:
-        import yaml
-
-        raw = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001
-        return True  # 读不出来就按老规矩管着
-    section = raw.get("wechat")
-    if not isinstance(section, dict):
-        return True
-    return bool(section.get("enabled", True))
-
-
-def engine_wanted() -> bool:
-    """配置里 tts.engine == clone 时，看门狗才去管那个克隆服务。"""
-    try:
-        import yaml
-
-        raw = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001
-        return False
-    section = raw.get("tts")
-    if not isinstance(section, dict):
-        return False
-    return str(section.get("engine", "")).strip().lower() in ("clone", "rvc", "convert")
-
-
 def check_once(dry_run: bool = False, do_notify: bool = True) -> dict:
     state = load_state()
     report: dict[str, object] = {}
@@ -325,37 +271,18 @@ def check_once(dry_run: bool = False, do_notify: bool = True) -> dict:
     qq_ok = listening(ONEBOT_PORT)
     report["qq"] = qq_ok
 
-    # 2) 微信通道（关掉了就跳过，不算掉线）
-    wx_on = wechat_enabled()
-    if wx_on:
-        wx_procs = procs_named("Weixin.exe")
-        wx_ok = wx_procs > 0
-    else:
-        wx_procs, wx_ok = 0, True
-    report["wechat"] = wx_ok
-    report["wechat_procs"] = wx_procs
-    report["wechat_enabled"] = wx_on
-
-    # 2.5) 音色克隆服务（只在自己开着的时候才要求它在）
-    eng_on = engine_wanted()
-    eng_ok = listening(VOICE_ENGINE_PORT) if eng_on else True
-    report["voice_engine"] = eng_ok
-    report["voice_engine_enabled"] = eng_on
-
-    # 3) 机器人（心跳）
+    # 2) 机器人（心跳）
     age = heartbeat_age()
     bot_ok = age is not None and age < HEARTBEAT_STALE
     report["bot"] = bot_ok
     report["heartbeat_age"] = None if age is None else round(age)
 
     log.info(
-        "体检 QQ=%s 微信=%s(%d 进程) 引擎=%s 机器人=%s(心跳 %s)",
+        "体检 QQ=%s 机器人=%s(心跳 %s)",
         "ok" if qq_ok else "★断",
-        "关" if not wx_on else ("ok" if wx_ok else "★断"), wx_procs,
-        "关" if not eng_on else ("ok" if eng_ok else "★断"),
         "ok" if bot_ok else "★断", "无" if age is None else f"{age:.0f}s",
     )
-    if qq_ok and wx_ok and eng_ok and bot_ok:
+    if qq_ok and bot_ok:
         save_state(state)
         report["actions"] = actions
         return report
@@ -374,24 +301,12 @@ def check_once(dry_run: bool = False, do_notify: bool = True) -> dict:
                    f"{MAX_REPAIRS_PER_HOUR} 次，先停手。你回来看一眼？")
         return report
 
-    # 顺序很重要：先修 QQ（机器人要连它），再修微信，最后修机器人
+    # 顺序很重要：先修 QQ（机器人要连它），再修机器人
     if not qq_ok:
         ok = fix_qq()
         actions.append(f"重启 QQ/NapCat：{'成功' if ok else '失败'}")
         note_repair(state)
         report["qq"] = ok
-
-    if wx_on and not wx_ok:
-        ok = fix_wechat()
-        actions.append(f"启动微信：{'成功' if ok else '失败'}")
-        note_repair(state)
-        report["wechat"] = ok
-
-    if eng_on and not eng_ok:
-        ok = fix_engine()
-        actions.append(f"拉起音色克隆服务：{'已拉起' if ok else '失败'}")
-        note_repair(state)
-        report["voice_engine"] = ok
 
     if not bot_ok:
         ok = fix_bot()
@@ -410,7 +325,7 @@ def check_once(dry_run: bool = False, do_notify: bool = True) -> dict:
 
 
 def stop_everything(keep_task: bool = False) -> int:
-    """暂停按钮：停掉机器人本体与微信桥接，并（默认）停掉看门狗计划任务。
+    """暂停按钮：停掉机器人本体，并（默认）停掉看门狗计划任务。
 
     注意：NapCat 与 QQ 不动 —— 那是你自己在用的 QQ。
     """
